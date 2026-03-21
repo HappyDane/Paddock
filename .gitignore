@@ -54,6 +54,11 @@ artifacts/
 *.userosscache
 *.sln.docstates
 
+## Test results
+*.trx
+*.log
+TestResults/
+
 ## Installer output
 *.msi
 *.msix

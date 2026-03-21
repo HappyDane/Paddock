@@ -274,8 +274,7 @@ Paddock/
 │       └── Product.wxs
 │
 ├── tests/
-│   ├── Paddock.Core.Tests/
-│   └── Paddock.Shell.Tests/
+│   └── Paddock.Core.Tests/
 │
 ├── assets/
 │   ├── logo.png

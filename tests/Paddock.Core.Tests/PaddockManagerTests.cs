@@ -3,13 +3,25 @@ using Paddock.Core.Services;
 
 namespace Paddock.Core.Tests;
 
-public class PaddockManagerTests
+public class PaddockManagerTests : IDisposable
 {
+    private readonly List<string> _tempFiles = new();
+
     private PaddockManager CreateManager()
     {
         var tempPath = Path.Combine(Path.GetTempPath(), $"paddock_test_{Guid.NewGuid():N}.json");
+        _tempFiles.Add(tempPath);
         var settings = new SettingsService(tempPath);
         return new PaddockManager(settings);
+    }
+
+    public void Dispose()
+    {
+        foreach (var path in _tempFiles)
+        {
+            try { File.Delete(path); } catch { }
+            try { File.Delete(path + ".tmp"); } catch { }
+        }
     }
 
     [Fact]
