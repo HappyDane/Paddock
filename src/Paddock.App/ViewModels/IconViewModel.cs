@@ -1,19 +1,28 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Paddock.Core.Models;
+using Paddock.Shell;
 
 namespace Paddock.App.ViewModels;
 
 public class IconViewModel : INotifyPropertyChanged
 {
     private readonly IconEntry _entry;
+    private readonly IconExtractor _iconExtractor;
 
     public IconViewModel(IconEntry entry)
+        : this(entry, ((App)Application.Current).IconExtractor)
+    {
+    }
+
+    public IconViewModel(IconEntry entry, IconExtractor iconExtractor)
     {
         _entry = entry;
+        _iconExtractor = iconExtractor;
     }
 
     public string DisplayName => Path.GetFileNameWithoutExtension(_entry.DesktopPath);
@@ -24,9 +33,7 @@ public class IconViewModel : INotifyPropertyChanged
     {
         get
         {
-            // TODO: Extract icon from file using Shell32
-            // For now, return null (will show blank)
-            return null;
+            return _iconExtractor.GetIcon(_entry.DesktopPath);
         }
     }
 

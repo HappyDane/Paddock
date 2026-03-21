@@ -8,8 +8,10 @@ public class AppSettings
     public bool QuickHideEnabled { get; set; } = true;
     public string QuickHideHotkey { get; set; } = "Ctrl+F12";
     public bool SnapEnabled { get; set; } = true;
+    public double IntelligentSpacing { get; set; } = 12;
     public double DefaultOpacity { get; set; } = 0.88;
     public double DefaultCornerRadius { get; set; } = 16;
+    public string RollUpExpandMode { get; set; } = "click";
     public string ActiveCorral { get; set; } = "default";
     public Dictionary<string, CorralModel> Corrals { get; set; } = new()
     {

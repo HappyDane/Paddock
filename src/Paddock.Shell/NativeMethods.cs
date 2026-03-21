@@ -59,4 +59,35 @@ internal static partial class NativeMethods
 
     internal const uint SMTO_NORMAL = 0x0000;
     internal const uint WM_SPAWN_WORKER = 0x052C;
+
+    // -- Icon Extraction --
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct SHFILEINFO
+    {
+        internal IntPtr hIcon;
+        internal int iIcon;
+        internal uint dwAttributes;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        internal string szDisplayName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)]
+        internal string szTypeName;
+    }
+
+    internal const uint SHGFI_ICON = 0x000000100;
+    internal const uint SHGFI_LARGEICON = 0x000000000;
+    internal const uint SHGFI_SMALLICON = 0x000000001;
+    internal const uint SHGFI_USEFILEATTRIBUTES = 0x000000010;
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    internal static extern IntPtr SHGetFileInfo(
+        string pszPath,
+        uint dwFileAttributes,
+        ref SHFILEINFO psfi,
+        uint cbSizeFileInfo,
+        uint uFlags);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool DestroyIcon(IntPtr hIcon);
 }

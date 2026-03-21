@@ -11,6 +11,7 @@ public partial class App : Application
     public SettingsService Settings { get; private set; } = null!;
     public PaddockManager PaddockManager { get; private set; } = null!;
     public DesktopIconService DesktopIconService { get; private set; } = null!;
+    public IconExtractor IconExtractor { get; private set; } = null!;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -20,6 +21,7 @@ public partial class App : Application
         Settings = new SettingsService();
         PaddockManager = new PaddockManager(Settings);
         DesktopIconService = new DesktopIconService();
+        IconExtractor = new IconExtractor();
 
         // Set up system tray icon
         InitializeTrayIcon();

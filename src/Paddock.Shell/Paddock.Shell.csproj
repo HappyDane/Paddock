@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <RootNamespace>Paddock.Shell</RootNamespace>
+    <UseWPF>true</UseWPF>
   </PropertyGroup>
 
   <ItemGroup>
