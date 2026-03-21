@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Windows;
 using Paddock.Core.Services;
 
 namespace Paddock.App.ViewModels;
@@ -16,7 +17,13 @@ public class SettingsViewModel : INotifyPropertyChanged
     public bool StartWithWindows
     {
         get => _settings.Settings.StartWithWindows;
-        set { _settings.Settings.StartWithWindows = value; _settings.Save(); OnPropertyChanged(); }
+        set
+        {
+            _settings.Settings.StartWithWindows = value;
+            _settings.Save();
+            ((App)Application.Current).StartupManager.SetStartupEnabled(value);
+            OnPropertyChanged();
+        }
     }
 
     public string GlobalTheme

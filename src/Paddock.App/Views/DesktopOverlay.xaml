@@ -7,7 +7,6 @@
         Background="Transparent"
         Topmost="False"
         ShowInTaskbar="False"
-        WindowState="Maximized"
         ResizeMode="NoResize">
 
     <!-- Main canvas where paddocks are rendered -->

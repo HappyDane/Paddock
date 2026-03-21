@@ -12,6 +12,8 @@ public partial class App : Application
     public PaddockManager PaddockManager { get; private set; } = null!;
     public DesktopIconService DesktopIconService { get; private set; } = null!;
     public IconExtractor IconExtractor { get; private set; } = null!;
+    public ShellHookService ShellHookService { get; private set; } = null!;
+    public StartupManager StartupManager { get; private set; } = null!;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -22,6 +24,11 @@ public partial class App : Application
         PaddockManager = new PaddockManager(Settings);
         DesktopIconService = new DesktopIconService();
         IconExtractor = new IconExtractor();
+        ShellHookService = new ShellHookService();
+        StartupManager = new StartupManager();
+
+        // Sync the startup registry entry with the persisted setting
+        StartupManager.SetStartupEnabled(Settings.Settings.StartWithWindows);
 
         // Set up system tray icon
         InitializeTrayIcon();

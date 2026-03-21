@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using Paddock.App.ViewModels;
+using Paddock.Shell;
 
 namespace Paddock.App.Views;
 
@@ -20,8 +22,25 @@ public partial class DesktopOverlay : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        // TODO: Embed this window into the desktop shell (WorkerW)
-        // TODO: Load saved paddocks and render them on the canvas
+        var app = (App)Application.Current;
+        var handle = new WindowInteropHelper(this).Handle;
+
+        // Set window size to cover the primary screen working area
+        var workArea = SystemParameters.WorkArea;
+        Left = workArea.Left;
+        Top = workArea.Top;
+        Width = workArea.Width;
+        Height = workArea.Height;
+
+        // Try to embed into the desktop shell (WorkerW)
+        bool embedded = app.ShellHookService.EmbedInDesktop(handle);
+
+        if (!embedded)
+        {
+            // Fall back to a normal transparent window
+            Topmost = false;
+        }
+
         _viewModel.Initialize(PaddockCanvas);
     }
 

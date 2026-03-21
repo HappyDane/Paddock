@@ -90,4 +90,16 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool DestroyIcon(IntPtr hIcon);
+
+    // -- Extended Window Styles --
+
+    internal const int GWL_EXSTYLE = -20;
+    internal const int WS_EX_TRANSPARENT = 0x00000020;
+    internal const int WS_EX_TOOLWINDOW = 0x00000080;
+
+    [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+    internal static partial IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    [LibraryImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+    internal static partial IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
 }
