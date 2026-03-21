@@ -8,6 +8,14 @@
     <ApplicationIcon>..\..\assets\tray-icon.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!-- Single-file publish settings (activated via publish profile or CLI) -->
+  <PropertyGroup Condition="'$(PublishSingleFile)' == 'true'">
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Paddock.Core\Paddock.Core.csproj" />
     <ProjectReference Include="..\Paddock.Shell\Paddock.Shell.csproj" />
