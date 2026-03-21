@@ -21,7 +21,6 @@ public class PaddockViewModel : INotifyPropertyChanged
         _model = model;
         _manager = manager;
 
-        // Load icons from model
         foreach (var iconEntry in model.Icons)
         {
             Icons.Add(new IconViewModel(iconEntry));
@@ -55,9 +54,6 @@ public class PaddockViewModel : INotifyPropertyChanged
 
     public CornerRadius CornerRadius => new(_model.Style.CornerRadius);
 
-    public CornerRadius TitleCornerRadius => new(
-        _model.Style.CornerRadius, _model.Style.CornerRadius, 0, 0);
-
     public Brush BackgroundBrush
     {
         get
@@ -66,26 +62,6 @@ public class PaddockViewModel : INotifyPropertyChanged
             return new SolidColorBrush(color);
         }
     }
-
-    public Brush TitleColor
-    {
-        get
-        {
-            var color = (Color)ColorConverter.ConvertFromString(_model.Style.TitleColor);
-            return new SolidColorBrush(color);
-        }
-    }
-
-    public new Brush BorderBrush
-    {
-        get
-        {
-            var color = (Color)ColorConverter.ConvertFromString(_model.Style.BorderColor);
-            return new SolidColorBrush(color);
-        }
-    }
-
-    public Thickness BorderThickness => new(_model.Style.BorderThickness);
 
     public ObservableCollection<IconViewModel> Icons { get; } = new();
 

@@ -30,6 +30,12 @@ public partial class PaddockControl : UserControl
         e.Handled = true;
     }
 
+    private void CloseButton_Click(object sender, MouseButtonEventArgs e)
+    {
+        ViewModel.Remove();
+        e.Handled = true;
+    }
+
     private void ResizeGrip_DragDelta(object sender, DragDeltaEventArgs e)
     {
         if (ViewModel.IsLocked)

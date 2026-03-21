@@ -55,7 +55,8 @@ public partial class App : Application
 
     private void OpenSettings()
     {
-        // TODO: Open settings window
+        var settings = new Views.SettingsWindow();
+        settings.ShowDialog();
     }
 
     private void ExitApplication()

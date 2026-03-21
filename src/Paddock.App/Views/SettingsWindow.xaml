@@ -1,0 +1,199 @@
+<Window x:Class="Paddock.App.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Paddock"
+        Width="420" Height="520"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="SingleBorderWindow"
+        ResizeMode="NoResize"
+        Background="{DynamicResource SettingsBackground}">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                  Padding="24,20">
+        <StackPanel>
+
+            <!-- App title -->
+            <TextBlock Text="Paddock"
+                       FontFamily="Segoe UI Variable, Segoe UI"
+                       FontSize="24"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource TextPrimary}"
+                       Margin="0,0,0,4" />
+            <TextBlock Text="Desktop Organizer"
+                       FontFamily="Segoe UI Variable, Segoe UI"
+                       FontSize="13"
+                       Foreground="{DynamicResource TextSecondary}"
+                       Margin="0,0,0,24" />
+
+            <!-- General section -->
+            <TextBlock Text="GENERAL"
+                       FontFamily="Segoe UI Variable, Segoe UI"
+                       FontSize="11"
+                       FontWeight="Medium"
+                       Foreground="{DynamicResource TextTertiary}"
+                       Margin="14,0,0,6" />
+
+            <Border Background="{DynamicResource SettingsCardBackground}"
+                    CornerRadius="12"
+                    Padding="16,4"
+                    Margin="0,0,0,20">
+                <StackPanel>
+                    <!-- Start with Windows -->
+                    <Grid Height="44">
+                        <TextBlock Text="Start with Windows"
+                                   FontFamily="Segoe UI Variable, Segoe UI"
+                                   FontSize="14"
+                                   Foreground="{DynamicResource TextPrimary}"
+                                   VerticalAlignment="Center" />
+                        <CheckBox x:Name="StartupToggle"
+                                  HorizontalAlignment="Right"
+                                  VerticalAlignment="Center"
+                                  IsChecked="{Binding StartWithWindows}" />
+                    </Grid>
+
+                    <Rectangle Height="0.5" Fill="{DynamicResource Separator}" Margin="-16,0" />
+
+                    <!-- Theme -->
+                    <Grid Height="44">
+                        <TextBlock Text="Theme"
+                                   FontFamily="Segoe UI Variable, Segoe UI"
+                                   FontSize="14"
+                                   Foreground="{DynamicResource TextPrimary}"
+                                   VerticalAlignment="Center" />
+                        <ComboBox x:Name="ThemeSelector"
+                                  HorizontalAlignment="Right"
+                                  VerticalAlignment="Center"
+                                  Width="100"
+                                  SelectedItem="{Binding GlobalTheme}">
+                            <ComboBoxItem Content="Dark" />
+                            <ComboBoxItem Content="Light" />
+                        </ComboBox>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Behavior section -->
+            <TextBlock Text="BEHAVIOR"
+                       FontFamily="Segoe UI Variable, Segoe UI"
+                       FontSize="11"
+                       FontWeight="Medium"
+                       Foreground="{DynamicResource TextTertiary}"
+                       Margin="14,0,0,6" />
+
+            <Border Background="{DynamicResource SettingsCardBackground}"
+                    CornerRadius="12"
+                    Padding="16,4"
+                    Margin="0,0,0,20">
+                <StackPanel>
+                    <!-- Quick hide -->
+                    <Grid Height="44">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Quick Hide"
+                                       FontFamily="Segoe UI Variable, Segoe UI"
+                                       FontSize="14"
+                                       Foreground="{DynamicResource TextPrimary}" />
+                            <TextBlock Text="Double-click desktop to toggle"
+                                       FontFamily="Segoe UI Variable, Segoe UI"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource TextTertiary}"
+                                       Margin="0,1,0,0" />
+                        </StackPanel>
+                        <CheckBox HorizontalAlignment="Right"
+                                  VerticalAlignment="Center"
+                                  IsChecked="{Binding QuickHideEnabled}" />
+                    </Grid>
+
+                    <Rectangle Height="0.5" Fill="{DynamicResource Separator}" Margin="-16,0" />
+
+                    <!-- Snap to edges -->
+                    <Grid Height="44">
+                        <TextBlock Text="Snap to Edges"
+                                   FontFamily="Segoe UI Variable, Segoe UI"
+                                   FontSize="14"
+                                   Foreground="{DynamicResource TextPrimary}"
+                                   VerticalAlignment="Center" />
+                        <CheckBox HorizontalAlignment="Right"
+                                  VerticalAlignment="Center"
+                                  IsChecked="{Binding SnapEnabled}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Appearance section -->
+            <TextBlock Text="DEFAULT APPEARANCE"
+                       FontFamily="Segoe UI Variable, Segoe UI"
+                       FontSize="11"
+                       FontWeight="Medium"
+                       Foreground="{DynamicResource TextTertiary}"
+                       Margin="14,0,0,6" />
+
+            <Border Background="{DynamicResource SettingsCardBackground}"
+                    CornerRadius="12"
+                    Padding="16,4"
+                    Margin="0,0,0,20">
+                <StackPanel>
+                    <!-- Opacity -->
+                    <Grid Height="44">
+                        <TextBlock Text="Opacity"
+                                   FontFamily="Segoe UI Variable, Segoe UI"
+                                   FontSize="14"
+                                   Foreground="{DynamicResource TextPrimary}"
+                                   VerticalAlignment="Center" />
+                        <StackPanel Orientation="Horizontal"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center">
+                            <Slider Width="120"
+                                    Minimum="0.2" Maximum="1.0"
+                                    Value="{Binding DefaultOpacity}"
+                                    VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding DefaultOpacity, StringFormat={}{0:P0}}"
+                                       FontFamily="Segoe UI Variable, Segoe UI"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource TextSecondary}"
+                                       Width="36"
+                                       TextAlignment="Right"
+                                       VerticalAlignment="Center"
+                                       Margin="8,0,0,0" />
+                        </StackPanel>
+                    </Grid>
+
+                    <Rectangle Height="0.5" Fill="{DynamicResource Separator}" Margin="-16,0" />
+
+                    <!-- Corner radius -->
+                    <Grid Height="44">
+                        <TextBlock Text="Corner Radius"
+                                   FontFamily="Segoe UI Variable, Segoe UI"
+                                   FontSize="14"
+                                   Foreground="{DynamicResource TextPrimary}"
+                                   VerticalAlignment="Center" />
+                        <StackPanel Orientation="Horizontal"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center">
+                            <Slider Width="120"
+                                    Minimum="0" Maximum="32"
+                                    Value="{Binding DefaultCornerRadius}"
+                                    VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding DefaultCornerRadius, StringFormat={}{0:F0}px}"
+                                       FontFamily="Segoe UI Variable, Segoe UI"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource TextSecondary}"
+                                       Width="36"
+                                       TextAlignment="Right"
+                                       VerticalAlignment="Center"
+                                       Margin="8,0,0,0" />
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Version -->
+            <TextBlock Text="Paddock v0.1.0"
+                       FontFamily="Segoe UI Variable, Segoe UI"
+                       FontSize="11"
+                       Foreground="{DynamicResource TextTertiary}"
+                       HorizontalAlignment="Center"
+                       Margin="0,8,0,0" />
+
+        </StackPanel>
+    </ScrollViewer>
+</Window>
