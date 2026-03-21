@@ -1,0 +1,94 @@
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+using System.Windows;
+using System.Windows.Controls;
+using Paddock.App.Views;
+using Paddock.Core.Models;
+using Paddock.Core.Services;
+
+namespace Paddock.App.ViewModels;
+
+public class DesktopOverlayViewModel : INotifyPropertyChanged
+{
+    private Canvas? _canvas;
+    private readonly PaddockManager _paddockManager;
+    private bool _isCreatingPaddock;
+
+    public ObservableCollection<PaddockViewModel> Paddocks { get; } = new();
+
+    public DesktopOverlayViewModel()
+    {
+        var app = (App)Application.Current;
+        _paddockManager = app.PaddockManager;
+    }
+
+    public void Initialize(Canvas canvas)
+    {
+        _canvas = canvas;
+        LoadPaddocks();
+    }
+
+    private void LoadPaddocks()
+    {
+        if (_canvas is null)
+            return;
+
+        var models = _paddockManager.GetPaddocks();
+        foreach (var model in models)
+        {
+            AddPaddockToCanvas(model);
+        }
+    }
+
+    public void BeginCreatePaddock(Point position)
+    {
+        if (_isCreatingPaddock)
+            return;
+
+        _isCreatingPaddock = true;
+
+        var model = _paddockManager.CreatePaddock(
+            title: "New Paddock",
+            x: position.X,
+            y: position.Y,
+            width: 300,
+            height: 250
+        );
+
+        AddPaddockToCanvas(model);
+        _isCreatingPaddock = false;
+    }
+
+    private void AddPaddockToCanvas(PaddockModel model)
+    {
+        if (_canvas is null)
+            return;
+
+        var vm = new PaddockViewModel(model, _paddockManager);
+        Paddocks.Add(vm);
+
+        var control = new PaddockControl
+        {
+            DataContext = vm,
+            Width = model.Width,
+            Height = model.Height
+        };
+
+        Canvas.SetLeft(control, model.X);
+        Canvas.SetTop(control, model.Y);
+        _canvas.Children.Add(control);
+
+        vm.RemoveRequested += () =>
+        {
+            _canvas.Children.Remove(control);
+            Paddocks.Remove(vm);
+            _paddockManager.DeletePaddock(model.Id);
+        };
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    protected void OnPropertyChanged([CallerMemberName] string? name = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}

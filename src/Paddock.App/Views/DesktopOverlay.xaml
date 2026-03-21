@@ -1,0 +1,22 @@
+<Window x:Class="Paddock.App.Views.DesktopOverlay"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Paddock Overlay"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="False"
+        ShowInTaskbar="False"
+        WindowState="Maximized"
+        ResizeMode="NoResize">
+
+    <!-- Main canvas where paddocks are rendered -->
+    <Canvas x:Name="PaddockCanvas"
+            Background="Transparent"
+            MouseRightButtonDown="Canvas_MouseRightButtonDown">
+
+        <!-- Paddock controls are added programmatically -->
+
+    </Canvas>
+
+</Window>

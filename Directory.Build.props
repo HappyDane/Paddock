@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>Paddock</RootNamespace>
+    <Authors>Paddock Contributors</Authors>
+    <Product>Paddock</Product>
+    <Description>Desktop icon organizer for Windows</Description>
+  </PropertyGroup>
+</Project>

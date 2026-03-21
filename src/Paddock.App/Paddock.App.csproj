@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Paddock.App</RootNamespace>
+    <AssemblyName>Paddock</AssemblyName>
+    <ApplicationIcon>..\..\assets\tray-icon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Paddock.Core\Paddock.Core.csproj" />
+    <ProjectReference Include="..\Paddock.Shell\Paddock.Shell.csproj" />
+  </ItemGroup>
+
+</Project>
