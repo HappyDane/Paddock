@@ -2,8 +2,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Interop;
 using Paddock.App.ViewModels;
 using Paddock.Core.Models;
+using Paddock.Shell;
 
 namespace Paddock.App.Views;
 
@@ -180,6 +182,17 @@ public partial class PaddockControl : UserControl
         if (sender is FrameworkElement { DataContext: IconViewModel icon })
         {
             icon.Launch();
+        }
+    }
+
+    private void Icon_RightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: IconViewModel icon })
+        {
+            var helper = new WindowInteropHelper(Window.GetWindow(this));
+            var screenPoint = PointToScreen(e.GetPosition(this));
+            ShellContextMenu.Show(icon.FullPath, helper.Handle, (int)screenPoint.X, (int)screenPoint.Y);
+            e.Handled = true;
         }
     }
 

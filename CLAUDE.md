@@ -9,7 +9,7 @@ It creates styled zones ("paddocks") on the desktop to group and organize icons.
 - **WPF** — UI framework (Windows-only)
 - **Win32 P/Invoke** — Desktop shell integration
 - **xUnit + Moq** — Testing
-- **WiX Toolset** — Installer (MSI)
+- **MSIX** — Installer (Windows Application Packaging Project)
 
 ## Project Structure
 ```
@@ -17,6 +17,7 @@ src/
   Paddock.App/       → WPF app (entry point, Views, ViewModels, Resources)
   Paddock.Core/      → Core logic (Models, Services) — no UI dependencies
   Paddock.Shell/     → Windows shell integration (P/Invoke, COM interop)
+  Paddock.Installer/ → MSIX packaging project (Windows Application Packaging)
 tests/
   Paddock.Core.Tests/ → Unit tests for core logic
 ```
@@ -33,6 +34,18 @@ dotnet build                          # Build all projects
 dotnet run --project src/Paddock.App  # Run the app
 dotnet test                           # Run all tests
 ```
+
+## Publish
+
+### Self-contained single-file exe (primary)
+```bash
+dotnet publish src/Paddock.App -c Release -p:PublishProfile=win-x64
+```
+Output: `artifacts/publish/win-x64/Paddock.exe` — a single self-contained executable.
+
+### MSIX package (secondary)
+Build the `Paddock.Installer` project in Visual Studio to produce an MSIX package.
+Requires the Windows Application Packaging Project tooling.
 
 ## Key Patterns
 - **Settings**: JSON file at `%AppData%/Paddock/settings.json`
