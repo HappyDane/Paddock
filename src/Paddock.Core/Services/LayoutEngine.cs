@@ -193,8 +193,8 @@ public class LayoutEngine
         double spacing)
     {
         double totalSpacing = spacing * (columns + 1);
-        double colWidth = (screenWidth - totalSpacing) / columns;
-        double rowHeight = screenHeight - spacing * 2;
+        double colWidth = Math.Max(100, (screenWidth - totalSpacing) / columns);
+        double rowHeight = Math.Max(80, screenHeight - spacing * 2);
 
         for (int i = 0; i < paddocks.Count; i++)
         {
@@ -243,7 +243,7 @@ public class LayoutEngine
         if (paddocks.Count > 2)
         {
             int extraCount = paddocks.Count - 2;
-            double extraHeight = (height - spacing * (extraCount - 1)) / extraCount;
+            double extraHeight = Math.Max(80, (height - spacing * (extraCount - 1)) / extraCount);
 
             for (int i = 2; i < paddocks.Count; i++)
             {
@@ -265,8 +265,8 @@ public class LayoutEngine
         double screenHeight,
         double spacing)
     {
-        double colWidth = (screenWidth - spacing * 3) / 2.0;
-        double rowHeight = (screenHeight - spacing * 3) / 2.0;
+        double colWidth = Math.Max(100, (screenWidth - spacing * 3) / 2.0);
+        double rowHeight = Math.Max(80, (screenHeight - spacing * 3) / 2.0);
 
         // Positions: top-left, top-right, bottom-left, bottom-right
         var positions = new[]

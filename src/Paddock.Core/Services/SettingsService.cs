@@ -10,9 +10,11 @@ public class SettingsService
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
 
+    private readonly object _lock = new();
     private readonly string _settingsPath;
     private AppSettings _settings;
 
@@ -52,8 +54,29 @@ public class SettingsService
 
     public void Save()
     {
-        var json = JsonSerializer.Serialize(_settings, JsonOptions);
-        File.WriteAllText(_settingsPath, json);
+        lock (_lock)
+        {
+            try
+            {
+                var json = JsonSerializer.Serialize(_settings, JsonOptions);
+                var tempPath = _settingsPath + ".tmp";
+                File.WriteAllText(tempPath, json);
+                File.Move(tempPath, _settingsPath, overwrite: true);
+            }
+            catch
+            {
+                // If atomic write fails, try direct write as fallback
+                try
+                {
+                    var json = JsonSerializer.Serialize(_settings, JsonOptions);
+                    File.WriteAllText(_settingsPath, json);
+                }
+                catch
+                {
+                    // Settings save failed — not fatal, will retry on next save
+                }
+            }
+        }
     }
 
     public CorralModel GetActiveCorral()

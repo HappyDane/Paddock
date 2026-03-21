@@ -12,6 +12,7 @@ namespace Paddock.App.Views;
 public partial class PaddockControl : UserControl
 {
     private PaddockViewModel ViewModel => (PaddockViewModel)DataContext;
+    private System.ComponentModel.PropertyChangedEventHandler? _vmPropertyChangedHandler;
 
     public PaddockControl()
     {
@@ -21,14 +22,22 @@ public partial class PaddockControl : UserControl
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
+        // Unsubscribe from old ViewModel
+        if (e.OldValue is PaddockViewModel oldVm && _vmPropertyChangedHandler is not null)
+        {
+            oldVm.PropertyChanged -= _vmPropertyChangedHandler;
+        }
+
+        // Subscribe to new ViewModel
         if (e.NewValue is PaddockViewModel vm)
         {
             UpdateTitleVisibility(vm.TitleVisibility);
-            vm.PropertyChanged += (_, args) =>
+            _vmPropertyChangedHandler = (_, args) =>
             {
                 if (args.PropertyName == nameof(PaddockViewModel.IsRenaming))
                     UpdateRenameState(vm.IsRenaming);
             };
+            vm.PropertyChanged += _vmPropertyChangedHandler;
         }
     }
 

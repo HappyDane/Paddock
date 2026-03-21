@@ -291,6 +291,7 @@ public class PaddockViewModel : INotifyPropertyChanged
 /// <summary>
 /// Data object for drag-drop between paddocks.
 /// </summary>
+[Serializable]
 public class IconDragData
 {
     public required string SourcePaddockId { get; init; }

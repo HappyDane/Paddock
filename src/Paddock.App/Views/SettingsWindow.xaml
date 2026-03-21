@@ -60,9 +60,10 @@
                         <ComboBox HorizontalAlignment="Right"
                                   VerticalAlignment="Center"
                                   Width="100"
-                                  SelectedItem="{Binding GlobalTheme}">
-                            <ComboBoxItem Content="Dark" />
-                            <ComboBoxItem Content="Light" />
+                                  SelectedValue="{Binding GlobalTheme}"
+                                  SelectedValuePath="Content">
+                            <ComboBoxItem Content="dark" />
+                            <ComboBoxItem Content="light" />
                         </ComboBox>
                     </Grid>
                 </StackPanel>
@@ -128,7 +129,8 @@
                         <ComboBox HorizontalAlignment="Right"
                                   VerticalAlignment="Center"
                                   Width="100"
-                                  SelectedItem="{Binding RollUpExpandMode}">
+                                  SelectedValue="{Binding RollUpExpandMode}"
+                                  SelectedValuePath="Content">
                             <ComboBoxItem Content="click" />
                             <ComboBoxItem Content="hover" />
                         </ComboBox>

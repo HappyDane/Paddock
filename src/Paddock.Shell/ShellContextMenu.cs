@@ -74,7 +74,7 @@ public static class ShellContextMenu
 
     // ── Structs ────────────────────────────────────────────────────────
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct CMINVOKECOMMANDINFO
     {
         public int cbSize;
@@ -137,6 +137,9 @@ public static class ShellContextMenu
     [DllImport("ole32.dll")]
     private static extern void CoTaskMemFree(IntPtr pv);
 
+    [DllImport("ole32.dll")]
+    private static extern void CoUninitialize();
+
     private const uint TPM_RETURNCMD = 0x0100;
     private const uint TPM_LEFTALIGN = 0x0000;
     private const uint CMF_NORMAL = 0x00000000;
@@ -161,11 +164,15 @@ public static class ShellContextMenu
 
         IntPtr pidlFull = IntPtr.Zero;
         IntPtr hMenu = IntPtr.Zero;
+        IShellFolder? folder = null;
+        IContextMenu? contextMenu = null;
+        var comInitialized = false;
 
         try
         {
             // Ensure COM is initialised on this thread.
-            CoInitializeEx(IntPtr.Zero, COINIT_APARTMENTTHREADED);
+            int coHr = CoInitializeEx(IntPtr.Zero, COINIT_APARTMENTTHREADED);
+            comInitialized = coHr == 0 || coHr == 1; // S_OK or S_FALSE
 
             // Parse the full path into an absolute PIDL.
             uint sfgao = 0;
@@ -179,7 +186,7 @@ public static class ShellContextMenu
             if (hr != 0 || ppvFolder == IntPtr.Zero)
                 return;
 
-            var folder = (IShellFolder)Marshal.GetObjectForIUnknown(ppvFolder);
+            folder = (IShellFolder)Marshal.GetObjectForIUnknown(ppvFolder);
             Marshal.Release(ppvFolder);
 
             // Ask for IContextMenu on the child item.
@@ -195,7 +202,7 @@ public static class ShellContextMenu
             if (ppvContextMenu == IntPtr.Zero)
                 return;
 
-            var contextMenu = (IContextMenu)Marshal.GetObjectForIUnknown(ppvContextMenu);
+            contextMenu = (IContextMenu)Marshal.GetObjectForIUnknown(ppvContextMenu);
             Marshal.Release(ppvContextMenu);
 
             // Build the popup menu.
@@ -238,8 +245,17 @@ public static class ShellContextMenu
             if (hMenu != IntPtr.Zero)
                 DestroyMenu(hMenu);
 
+            if (contextMenu is not null)
+                Marshal.ReleaseComObject(contextMenu);
+
+            if (folder is not null)
+                Marshal.ReleaseComObject(folder);
+
             if (pidlFull != IntPtr.Zero)
                 CoTaskMemFree(pidlFull);
+
+            if (comInitialized)
+                CoUninitialize();
         }
     }
 }
