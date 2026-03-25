@@ -40,6 +40,7 @@ public partial class App : Application
         {
             Visible = true,
             Text = "Paddock - Desktop Organizer",
+            Icon = System.Drawing.SystemIcons.Application,
         };
 
         var menu = new System.Windows.Forms.ContextMenuStrip();
