@@ -3,6 +3,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>Paddock.App</RootNamespace>
     <AssemblyName>Paddock</AssemblyName>
     <!-- Uncomment when assets/tray-icon.ico is added -->
