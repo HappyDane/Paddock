@@ -91,6 +91,15 @@ internal static partial class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool DestroyIcon(IntPtr hIcon);
 
+    // -- SendMessage for ListView control --
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    internal static extern IntPtr SendMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    // MAKELPARAM packs two 16-bit values into one IntPtr
+    internal static IntPtr MakeLParam(int low, int high)
+        => (IntPtr)((high << 16) | (low & 0xFFFF));
+
     // -- Extended Window Styles --
 
     internal const int GWL_EXSTYLE = -20;
