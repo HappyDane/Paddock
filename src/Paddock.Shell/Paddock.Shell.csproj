@@ -3,6 +3,7 @@
   <PropertyGroup>
     <RootNamespace>Paddock.Shell</RootNamespace>
     <UseWPF>true</UseWPF>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

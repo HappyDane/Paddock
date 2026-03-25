@@ -121,8 +121,11 @@ public partial class PaddockControl : UserControl
 
     private void TitleBar_DoubleClick(object sender, MouseButtonEventArgs e)
     {
-        ViewModel.ToggleRollUp();
-        e.Handled = true;
+        if (e.ClickCount == 2)
+        {
+            ViewModel.ToggleRollUp();
+            e.Handled = true;
+        }
     }
 
     // --- Rename ---
@@ -188,7 +191,7 @@ public partial class PaddockControl : UserControl
 
     private void Icon_DoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: IconViewModel icon })
+        if (e.ClickCount == 2 && sender is FrameworkElement { DataContext: IconViewModel icon })
         {
             icon.Launch();
         }

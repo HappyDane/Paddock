@@ -9,17 +9,17 @@ internal static partial class NativeMethods
 {
     // -- Window Management --
 
-    [LibraryImport("user32.dll", SetLastError = true)]
+    [LibraryImport("user32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     internal static partial IntPtr FindWindowW(
-        [MarshalAs(UnmanagedType.LPWStr)] string? lpClassName,
-        [MarshalAs(UnmanagedType.LPWStr)] string? lpWindowName);
+        string? lpClassName,
+        string? lpWindowName);
 
-    [LibraryImport("user32.dll", SetLastError = true)]
+    [LibraryImport("user32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     internal static partial IntPtr FindWindowExW(
         IntPtr hwndParent,
         IntPtr hwndChildAfter,
-        [MarshalAs(UnmanagedType.LPWStr)] string? lpszClass,
-        [MarshalAs(UnmanagedType.LPWStr)] string? lpszWindow);
+        string? lpszClass,
+        string? lpszWindow);
 
     [LibraryImport("user32.dll", SetLastError = true)]
     internal static partial IntPtr SendMessageTimeoutW(
@@ -40,10 +40,10 @@ internal static partial class NativeMethods
 
     internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-    [LibraryImport("user32.dll", SetLastError = true)]
+    [LibraryImport("user32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     internal static partial int GetClassNameW(
         IntPtr hWnd,
-        [MarshalAs(UnmanagedType.LPWStr)] char[] lpClassName,
+        [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 2)] char[] lpClassName,
         int nMaxCount);
 
     // -- Desktop ListView (icon positions) --
