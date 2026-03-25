@@ -3,7 +3,6 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <UseWPF>true</UseWPF>
-    <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>Paddock.App</RootNamespace>
     <AssemblyName>Paddock</AssemblyName>
     <!-- Uncomment when assets/tray-icon.ico is added -->
@@ -17,6 +16,11 @@
     <PublishReadyToRun>true</PublishReadyToRun>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
+
+  <!-- WinForms assembly for NotifyIcon (tray icon) without implicit usings -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Paddock.Core\Paddock.Core.csproj" />
