@@ -43,6 +43,11 @@ public class DesktopOverlayViewModel : INotifyPropertyChanged
 
     public void BeginCreatePaddock(Point position)
     {
+        BeginCreatePaddock(new Rect(position.X, position.Y, 300, 250));
+    }
+
+    public void BeginCreatePaddock(Rect area)
+    {
         if (_isCreatingPaddock)
             return;
 
@@ -50,10 +55,10 @@ public class DesktopOverlayViewModel : INotifyPropertyChanged
 
         var model = _paddockManager.CreatePaddock(
             title: "New Paddock",
-            x: position.X,
-            y: position.Y,
-            width: 300,
-            height: 250
+            x: area.X,
+            y: area.Y,
+            width: area.Width,
+            height: area.Height
         );
 
         AddPaddockToCanvas(model);

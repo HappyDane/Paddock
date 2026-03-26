@@ -1,15 +1,23 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using Paddock.App.ViewModels;
-using Paddock.Shell;
 
 namespace Paddock.App.Views;
 
 public partial class DesktopOverlay : Window
 {
     private readonly DesktopOverlayViewModel _viewModel;
+
+    // Draw-to-create state
+    private bool _isDrawing;
+    private Point _drawStart;
+    private Rect _drawnRect;
+
+    // Minimum size (in pixels) for a drawn rectangle to count as a valid area
+    private const double MinDrawSize = 40;
 
     public DesktopOverlay()
     {
@@ -43,33 +51,126 @@ public partial class DesktopOverlay : Window
         }
 
         _viewModel.Initialize(PaddockCanvas);
-
-        // With AllowsTransparency=True and Background="Transparent" on the
-        // Window, WPF creates a layered window. Pixels with alpha=0 are
-        // automatically click-through at the Win32 level. PaddockControls
-        // have non-transparent backgrounds, so they intercept clicks normally.
-        //
-        // The Canvas uses Background="Transparent" so that WPF routed events
-        // (like MouseRightButtonDown for the context menu) still fire when the
-        // user right-clicks empty space. Left-clicks on empty space pass
-        // through to the desktop because the layered window's per-pixel
-        // alpha is 0 in those areas.
-        //
-        // No Win32 WS_EX_TRANSPARENT style is needed here -- that would
-        // disable hit-testing for PaddockControls too.
     }
 
     private void Canvas_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
     {
-        // Only show the "New Paddock" menu when clicking on empty canvas space,
+        // Dismiss any existing create popup first
+        DismissCreatePopup();
+
+        // Only start drawing when clicking on empty canvas space,
         // not when right-clicking a PaddockControl (which has its own context menu).
         var hit = VisualTreeHelper.HitTest(PaddockCanvas, e.GetPosition(PaddockCanvas));
         if (hit?.VisualHit is not null && IsInsidePaddockControl(hit.VisualHit))
             return;
 
-        var menu = new System.Windows.Controls.ContextMenu();
+        // Begin drawing a selection rectangle
+        _drawStart = e.GetPosition(PaddockCanvas);
+        _isDrawing = true;
 
-        var createItem = new System.Windows.Controls.MenuItem { Header = "New Paddock" };
+        // Show the selection rectangle at zero size
+        Canvas.SetLeft(SelectionRect, _drawStart.X);
+        Canvas.SetTop(SelectionRect, _drawStart.Y);
+        SelectionRect.Width = 0;
+        SelectionRect.Height = 0;
+        SelectionRect.Visibility = Visibility.Visible;
+
+        // Capture mouse to track movement even outside the canvas
+        PaddockCanvas.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void Canvas_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_isDrawing)
+            return;
+
+        var current = e.GetPosition(PaddockCanvas);
+
+        // Calculate the rectangle from start to current position
+        double x = Math.Min(_drawStart.X, current.X);
+        double y = Math.Min(_drawStart.Y, current.Y);
+        double w = Math.Abs(current.X - _drawStart.X);
+        double h = Math.Abs(current.Y - _drawStart.Y);
+
+        // Clamp to canvas bounds
+        if (x < 0) { w += x; x = 0; }
+        if (y < 0) { h += y; y = 0; }
+        if (x + w > PaddockCanvas.ActualWidth) w = PaddockCanvas.ActualWidth - x;
+        if (y + h > PaddockCanvas.ActualHeight) h = PaddockCanvas.ActualHeight - y;
+
+        Canvas.SetLeft(SelectionRect, x);
+        Canvas.SetTop(SelectionRect, y);
+        SelectionRect.Width = Math.Max(0, w);
+        SelectionRect.Height = Math.Max(0, h);
+    }
+
+    private void Canvas_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isDrawing)
+            return;
+
+        _isDrawing = false;
+        PaddockCanvas.ReleaseMouseCapture();
+
+        double w = SelectionRect.Width;
+        double h = SelectionRect.Height;
+
+        // Hide the selection rectangle
+        SelectionRect.Visibility = Visibility.Collapsed;
+
+        if (w >= MinDrawSize && h >= MinDrawSize)
+        {
+            // Save the drawn rect for creation
+            double x = Canvas.GetLeft(SelectionRect);
+            double y = Canvas.GetTop(SelectionRect);
+            _drawnRect = new Rect(x, y, w, h);
+
+            // Position the popup just below the bottom-right corner of the drawn area
+            double popupX = x + w - 10;
+            double popupY = y + h + 8;
+
+            // Keep popup on screen
+            CreatePopup.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            double popupWidth = CreatePopup.DesiredSize.Width;
+            double popupHeight = CreatePopup.DesiredSize.Height;
+
+            if (popupX + popupWidth > PaddockCanvas.ActualWidth)
+                popupX = PaddockCanvas.ActualWidth - popupWidth - 8;
+            if (popupY + popupHeight > PaddockCanvas.ActualHeight)
+                popupY = y - popupHeight - 8;
+
+            Canvas.SetLeft(CreatePopup, popupX);
+            Canvas.SetTop(CreatePopup, popupY);
+            CreatePopup.Visibility = Visibility.Visible;
+
+            e.Handled = true;
+        }
+        else
+        {
+            // Too small — treat as a simple right-click and show context menu
+            ShowCanvasContextMenu(e);
+        }
+    }
+
+    private void CreatePopup_Click(object sender, MouseButtonEventArgs e)
+    {
+        CreatePopup.Visibility = Visibility.Collapsed;
+
+        _viewModel.BeginCreatePaddock(_drawnRect);
+        e.Handled = true;
+    }
+
+    private void DismissCreatePopup()
+    {
+        CreatePopup.Visibility = Visibility.Collapsed;
+    }
+
+    private void ShowCanvasContextMenu(MouseButtonEventArgs e)
+    {
+        var menu = new ContextMenu();
+
+        var createItem = new MenuItem { Header = "New Paddock" };
         createItem.Click += (_, _) =>
         {
             var position = e.GetPosition(PaddockCanvas);
