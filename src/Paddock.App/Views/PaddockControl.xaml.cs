@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using Paddock.App.ViewModels;
 using Paddock.Core.Models;
+using Paddock.Core.Services;
 using Paddock.Shell;
 
 namespace Paddock.App.Views;
@@ -13,6 +14,17 @@ public partial class PaddockControl : UserControl
 {
     private PaddockViewModel ViewModel => (PaddockViewModel)DataContext;
     private System.ComponentModel.PropertyChangedEventHandler? _vmPropertyChangedHandler;
+
+    // Drag state tracking
+    private bool _isDragging;
+    private Point _dragOriginPosition;
+
+    // Minimum distance (pixels) before a mouse move counts as a drag
+    private const double MinDragDistance = 5;
+
+    // Icon drag state
+    private Point _iconDragStart;
+    private bool _iconDragStarted;
 
     public PaddockControl()
     {
@@ -80,9 +92,18 @@ public partial class PaddockControl : UserControl
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (e.ClickCount == 2)
+        {
+            ViewModel.ToggleRollUp();
+            e.Handled = true;
+            return;
+        }
+
         if (ViewModel.IsLocked || ViewModel.IsRenaming)
             return;
 
+        _isDragging = false;
+        _dragOriginPosition = e.GetPosition(Parent as Canvas ?? this);
         ViewModel.BeginDrag(e.GetPosition(this));
         CaptureMouse();
     }
@@ -99,8 +120,33 @@ public partial class PaddockControl : UserControl
             return;
 
         var mousePos = e.GetPosition(canvas);
+
+        // Only start dragging after the mouse moves beyond the threshold
+        if (!_isDragging)
+        {
+            var delta = mousePos - _dragOriginPosition;
+            if (Math.Abs(delta.X) < MinDragDistance && Math.Abs(delta.Y) < MinDragDistance)
+                return;
+            _isDragging = true;
+        }
+
         var newX = mousePos.X - ViewModel.DragStartOffset.X;
         var newY = mousePos.Y - ViewModel.DragStartOffset.Y;
+
+        // Apply snap-to-edge if enabled
+        var app = (App)Application.Current;
+        if (app.Settings.Settings.SnapEnabled)
+        {
+            var snapped = ViewModel.SnapPosition(
+                newX, newY,
+                app.LayoutEngine,
+                app.PaddockManager.GetPaddocks(),
+                canvas.ActualWidth,
+                canvas.ActualHeight,
+                app.Settings.Settings.IntelligentSpacing);
+            newX = snapped.X;
+            newY = snapped.Y;
+        }
 
         Canvas.SetLeft(this, newX);
         Canvas.SetTop(this, newY);
@@ -113,18 +159,16 @@ public partial class PaddockControl : UserControl
         if (IsMouseCaptured)
         {
             ReleaseMouseCapture();
-            var x = Canvas.GetLeft(this);
-            var y = Canvas.GetTop(this);
-            ViewModel.UpdatePosition(x, y);
-        }
-    }
 
-    private void TitleBar_DoubleClick(object sender, MouseButtonEventArgs e)
-    {
-        if (e.ClickCount == 2)
-        {
-            ViewModel.ToggleRollUp();
-            e.Handled = true;
+            // Only save position if the user actually dragged
+            if (_isDragging)
+            {
+                var x = Canvas.GetLeft(this);
+                var y = Canvas.GetTop(this);
+                ViewModel.UpdatePosition(x, y);
+            }
+
+            _isDragging = false;
         }
     }
 
@@ -172,6 +216,12 @@ public partial class PaddockControl : UserControl
             Width = newWidth;
         if (newHeight >= MinHeight)
             Height = newHeight;
+    }
+
+    private void ResizeGrip_DragCompleted(object sender, DragCompletedEventArgs e)
+    {
+        if (ViewModel.IsLocked)
+            return;
 
         ViewModel.UpdateSize(Width, Height);
     }
@@ -189,11 +239,21 @@ public partial class PaddockControl : UserControl
         e.Handled = true;
     }
 
+    private void Icon_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement element)
+        {
+            _iconDragStart = e.GetPosition(element);
+            _iconDragStarted = false;
+        }
+    }
+
     private void Icon_DoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (e.ClickCount == 2 && sender is FrameworkElement { DataContext: IconViewModel icon })
+        if (sender is FrameworkElement { DataContext: IconViewModel icon })
         {
             icon.Launch();
+            e.Handled = true;
         }
     }
 
@@ -211,17 +271,32 @@ public partial class PaddockControl : UserControl
     private void Icon_MouseMove(object sender, MouseEventArgs e)
     {
         if (e.LeftButton != MouseButtonState.Pressed)
+        {
+            _iconDragStarted = false;
+            return;
+        }
+
+        if (sender is not FrameworkElement element || element.DataContext is not IconViewModel icon)
             return;
 
-        if (sender is FrameworkElement element && element.DataContext is IconViewModel icon)
+        // Require minimum mouse movement before starting a drag,
+        // so that double-click to launch still works reliably.
+        var currentPos = e.GetPosition(element);
+        var delta = currentPos - _iconDragStart;
+        if (Math.Abs(delta.X) < MinDragDistance && Math.Abs(delta.Y) < MinDragDistance)
+            return;
+
+        if (_iconDragStarted)
+            return;
+
+        _iconDragStarted = true;
+
+        var dragData = new IconDragData
         {
-            var dragData = new IconDragData
-            {
-                SourcePaddockId = ViewModel.Id,
-                DesktopPath = icon.FullPath
-            };
-            DragDrop.DoDragDrop(element, dragData, DragDropEffects.Move);
-        }
+            SourcePaddockId = ViewModel.Id,
+            DesktopPath = icon.FullPath
+        };
+        DragDrop.DoDragDrop(element, dragData, DragDropEffects.Move);
     }
 
     // --- Context menu handlers ---

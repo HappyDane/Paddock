@@ -87,7 +87,6 @@
                     VerticalAlignment="Top"
                     Background="Transparent"
                     MouseLeftButtonDown="TitleBar_MouseLeftButtonDown"
-                    MouseLeftButtonUp="TitleBar_DoubleClick"
                     Cursor="SizeAll">
 
                 <Grid>
@@ -156,7 +155,8 @@
                    Cursor="SizeNWSE"
                    Opacity="0"
                    Visibility="{Binding ContentVisibility}"
-                   DragDelta="ResizeGrip_DragDelta" />
+                   DragDelta="ResizeGrip_DragDelta"
+                   DragCompleted="ResizeGrip_DragCompleted" />
 
             <!-- Icon grid (hidden when rolled up) -->
             <ItemsControl ItemsSource="{Binding Icons}"
@@ -174,7 +174,8 @@
                     <DataTemplate>
                         <StackPanel Width="76" Height="84"
                                     Margin="2"
-                                    MouseLeftButtonUp="Icon_DoubleClick"
+                                    MouseLeftButtonDown="Icon_MouseLeftButtonDown"
+                                    MouseDoubleClick="Icon_DoubleClick"
                                     MouseRightButtonDown="Icon_RightClick"
                                     MouseMove="Icon_MouseMove"
                                     Cursor="Hand"

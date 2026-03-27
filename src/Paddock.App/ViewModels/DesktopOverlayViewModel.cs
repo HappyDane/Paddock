@@ -26,7 +26,27 @@ public class DesktopOverlayViewModel : INotifyPropertyChanged
     public void Initialize(Canvas canvas)
     {
         _canvas = canvas;
+        ClampPaddocksToScreen();
         LoadPaddocks();
+    }
+
+    /// <summary>
+    /// Clamp all saved paddock positions to the current screen bounds.
+    /// This handles resolution changes, monitor disconnects, etc.
+    /// </summary>
+    private void ClampPaddocksToScreen()
+    {
+        if (_canvas is null)
+            return;
+
+        var app = (App)Application.Current;
+        var models = _paddockManager.GetPaddocks();
+
+        if (models.Count == 0)
+            return;
+
+        app.LayoutEngine.ClampToScreen(models, _canvas.ActualWidth, _canvas.ActualHeight);
+        _paddockManager.SaveLayout();
     }
 
     private void LoadPaddocks()
@@ -63,6 +83,42 @@ public class DesktopOverlayViewModel : INotifyPropertyChanged
 
         AddPaddockToCanvas(model);
         _isCreatingPaddock = false;
+    }
+
+    /// <summary>
+    /// Toggle visibility of all paddock controls (QuickHide).
+    /// Paddocks with ExcludeFromQuickHide remain visible.
+    /// </summary>
+    public void ToggleQuickHide()
+    {
+        if (_canvas is null)
+            return;
+
+        // Determine the target state: if any non-excluded paddock is visible, hide all; otherwise show all.
+        bool anyVisible = false;
+        foreach (var child in _canvas.Children)
+        {
+            if (child is PaddockControl control
+                && control.DataContext is PaddockViewModel vm
+                && !vm.ExcludeFromQuickHide
+                && control.Visibility == Visibility.Visible)
+            {
+                anyVisible = true;
+                break;
+            }
+        }
+
+        var targetVisibility = anyVisible ? Visibility.Collapsed : Visibility.Visible;
+
+        foreach (var child in _canvas.Children)
+        {
+            if (child is PaddockControl control
+                && control.DataContext is PaddockViewModel vm
+                && !vm.ExcludeFromQuickHide)
+            {
+                control.Visibility = targetVisibility;
+            }
+        }
     }
 
     private void AddPaddockToCanvas(PaddockModel model)

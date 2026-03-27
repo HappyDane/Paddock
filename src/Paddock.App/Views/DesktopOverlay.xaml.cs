@@ -34,12 +34,13 @@ public partial class DesktopOverlay : Window
         var app = (App)Application.Current;
         var handle = new WindowInteropHelper(this).Handle;
 
-        // Set window size to cover the primary screen working area
-        var workArea = SystemParameters.WorkArea;
-        Left = workArea.Left;
-        Top = workArea.Top;
-        Width = workArea.Width;
-        Height = workArea.Height;
+        // Set window size to cover the entire virtual screen (all monitors).
+        // VirtualScreen* properties span all monitors, including negative
+        // offsets when a monitor is to the left of or above the primary one.
+        Left = SystemParameters.VirtualScreenLeft;
+        Top = SystemParameters.VirtualScreenTop;
+        Width = SystemParameters.VirtualScreenWidth;
+        Height = SystemParameters.VirtualScreenHeight;
 
         // Try to embed into the desktop shell (WorkerW)
         bool embedded = app.ShellHookService.EmbedInDesktop(handle);
@@ -51,6 +52,24 @@ public partial class DesktopOverlay : Window
         }
 
         _viewModel.Initialize(PaddockCanvas);
+    }
+
+    private void Canvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2)
+            return;
+
+        // Only trigger on empty canvas space, not inside a paddock
+        var hit = VisualTreeHelper.HitTest(PaddockCanvas, e.GetPosition(PaddockCanvas));
+        if (hit?.VisualHit is not null && IsInsidePaddockControl(hit.VisualHit))
+            return;
+
+        var app = (App)Application.Current;
+        if (!app.Settings.Settings.QuickHideEnabled)
+            return;
+
+        _viewModel.ToggleQuickHide();
+        e.Handled = true;
     }
 
     private void Canvas_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
