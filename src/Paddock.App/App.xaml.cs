@@ -10,6 +10,7 @@ public partial class App : Application
 
     public SettingsService Settings { get; private set; } = null!;
     public PaddockManager PaddockManager { get; private set; } = null!;
+    public LayoutEngine LayoutEngine { get; private set; } = null!;
     public DesktopIconService DesktopIconService { get; private set; } = null!;
     public IconExtractor IconExtractor { get; private set; } = null!;
     public ShellHookService ShellHookService { get; private set; } = null!;
@@ -22,6 +23,7 @@ public partial class App : Application
         // Initialize services
         Settings = new SettingsService();
         PaddockManager = new PaddockManager(Settings);
+        LayoutEngine = new LayoutEngine();
         DesktopIconService = new DesktopIconService();
         IconExtractor = new IconExtractor();
         ShellHookService = new ShellHookService();
@@ -29,6 +31,9 @@ public partial class App : Application
 
         // Sync the startup registry entry with the persisted setting
         StartupManager.SetStartupEnabled(Settings.Settings.StartWithWindows);
+
+        // Save layout when Windows is shutting down or the user logs off
+        SessionEnding += (_, _) => PaddockManager.SaveLayout();
 
         // Set up system tray icon
         InitializeTrayIcon();
@@ -78,6 +83,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        PaddockManager?.SaveLayout();
         _trayIcon?.Dispose();
         base.OnExit(e);
     }

@@ -227,6 +227,28 @@ public class PaddockViewModel : INotifyPropertyChanged
         _manager.SaveLayout();
     }
 
+    public (double X, double Y) SnapPosition(
+        double x, double y,
+        LayoutEngine layoutEngine,
+        IReadOnlyList<PaddockModel> allPaddocks,
+        double screenWidth, double screenHeight,
+        double spacingGap)
+    {
+        // Temporarily set position so the engine can read it
+        var oldX = _model.X;
+        var oldY = _model.Y;
+        _model.X = x;
+        _model.Y = y;
+
+        var result = layoutEngine.SnapToEdges(_model, allPaddocks, screenWidth, screenHeight, spacingGap);
+
+        // Restore original position (caller will set it via UpdatePosition when drag ends)
+        _model.X = oldX;
+        _model.Y = oldY;
+
+        return result;
+    }
+
     public void BeginRenameTitle()
     {
         RenameText = Title;
