@@ -155,7 +155,8 @@
                    Cursor="SizeNWSE"
                    Opacity="0"
                    Visibility="{Binding ContentVisibility}"
-                   DragDelta="ResizeGrip_DragDelta" />
+                   DragDelta="ResizeGrip_DragDelta"
+                   DragCompleted="ResizeGrip_DragCompleted" />
 
             <!-- Icon grid (hidden when rolled up) -->
             <ItemsControl ItemsSource="{Binding Icons}"

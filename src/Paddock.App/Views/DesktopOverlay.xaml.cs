@@ -34,12 +34,13 @@ public partial class DesktopOverlay : Window
         var app = (App)Application.Current;
         var handle = new WindowInteropHelper(this).Handle;
 
-        // Set window size to cover the primary screen working area
-        var workArea = SystemParameters.WorkArea;
-        Left = workArea.Left;
-        Top = workArea.Top;
-        Width = workArea.Width;
-        Height = workArea.Height;
+        // Set window size to cover the entire virtual screen (all monitors).
+        // VirtualScreen* properties span all monitors, including negative
+        // offsets when a monitor is to the left of or above the primary one.
+        Left = SystemParameters.VirtualScreenLeft;
+        Top = SystemParameters.VirtualScreenTop;
+        Width = SystemParameters.VirtualScreenWidth;
+        Height = SystemParameters.VirtualScreenHeight;
 
         // Try to embed into the desktop shell (WorkerW)
         bool embedded = app.ShellHookService.EmbedInDesktop(handle);

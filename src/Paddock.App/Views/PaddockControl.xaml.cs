@@ -216,6 +216,12 @@ public partial class PaddockControl : UserControl
             Width = newWidth;
         if (newHeight >= MinHeight)
             Height = newHeight;
+    }
+
+    private void ResizeGrip_DragCompleted(object sender, DragCompletedEventArgs e)
+    {
+        if (ViewModel.IsLocked)
+            return;
 
         ViewModel.UpdateSize(Width, Height);
     }
