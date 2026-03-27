@@ -54,6 +54,24 @@ public partial class DesktopOverlay : Window
         _viewModel.Initialize(PaddockCanvas);
     }
 
+    private void Canvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2)
+            return;
+
+        // Only trigger on empty canvas space, not inside a paddock
+        var hit = VisualTreeHelper.HitTest(PaddockCanvas, e.GetPosition(PaddockCanvas));
+        if (hit?.VisualHit is not null && IsInsidePaddockControl(hit.VisualHit))
+            return;
+
+        var app = (App)Application.Current;
+        if (!app.Settings.Settings.QuickHideEnabled)
+            return;
+
+        _viewModel.ToggleQuickHide();
+        e.Handled = true;
+    }
+
     private void Canvas_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
     {
         // Dismiss any existing create popup first

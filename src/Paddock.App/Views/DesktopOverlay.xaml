@@ -12,6 +12,7 @@
     <!-- Main canvas where paddocks are rendered -->
     <Canvas x:Name="PaddockCanvas"
             Background="Transparent"
+            MouseLeftButtonDown="Canvas_MouseLeftButtonDown"
             MouseRightButtonDown="Canvas_MouseRightButtonDown"
             MouseRightButtonUp="Canvas_MouseRightButtonUp"
             MouseMove="Canvas_MouseMove">

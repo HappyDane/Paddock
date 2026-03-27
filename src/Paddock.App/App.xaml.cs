@@ -1,3 +1,5 @@
+using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Windows;
 using Paddock.Core.Services;
 using Paddock.Shell;
@@ -45,7 +47,7 @@ public partial class App : Application
         {
             Visible = true,
             Text = "Paddock - Desktop Organizer",
-            Icon = System.Drawing.SystemIcons.Application,
+            Icon = CreateTrayIcon(),
         };
 
         var menu = new System.Windows.Forms.ContextMenuStrip();
@@ -79,6 +81,51 @@ public partial class App : Application
         _trayIcon?.Dispose();
         PaddockManager.SaveLayout();
         Shutdown();
+    }
+
+    /// <summary>
+    /// Generates a 32x32 tray icon at runtime — a stylised fence/paddock glyph
+    /// so the app is recognisable in the system tray without shipping a separate .ico.
+    /// </summary>
+    private static Icon CreateTrayIcon()
+    {
+        const int size = 32;
+        using var bmp = new Bitmap(size, size);
+        using var g = Graphics.FromImage(bmp);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.Clear(Color.Transparent);
+
+        // Rounded-rect background (#0A84FF accent blue)
+        using var bgBrush = new SolidBrush(Color.FromArgb(10, 132, 255));
+        using var bgPath = RoundedRect(new Rectangle(0, 0, size, size), 7);
+        g.FillPath(bgBrush, bgPath);
+
+        // Draw three vertical fence posts
+        using var postPen = new Pen(Color.White, 2.4f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        int[] postXs = [9, 16, 23];
+        foreach (int px in postXs)
+        {
+            g.DrawLine(postPen, px, 8, px, 24);
+        }
+
+        // Draw two horizontal rails
+        using var railPen = new Pen(Color.FromArgb(200, 255, 255, 255), 1.8f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        g.DrawLine(railPen, 6, 13, 26, 13);
+        g.DrawLine(railPen, 6, 19, 26, 19);
+
+        return Icon.FromHandle(bmp.GetHicon());
+    }
+
+    private static GraphicsPath RoundedRect(Rectangle bounds, int radius)
+    {
+        var path = new GraphicsPath();
+        int d = radius * 2;
+        path.AddArc(bounds.Left, bounds.Top, d, d, 180, 90);
+        path.AddArc(bounds.Right - d, bounds.Top, d, d, 270, 90);
+        path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
+        path.AddArc(bounds.Left, bounds.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 
     protected override void OnExit(ExitEventArgs e)

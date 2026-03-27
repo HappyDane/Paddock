@@ -85,6 +85,42 @@ public class DesktopOverlayViewModel : INotifyPropertyChanged
         _isCreatingPaddock = false;
     }
 
+    /// <summary>
+    /// Toggle visibility of all paddock controls (QuickHide).
+    /// Paddocks with ExcludeFromQuickHide remain visible.
+    /// </summary>
+    public void ToggleQuickHide()
+    {
+        if (_canvas is null)
+            return;
+
+        // Determine the target state: if any non-excluded paddock is visible, hide all; otherwise show all.
+        bool anyVisible = false;
+        foreach (var child in _canvas.Children)
+        {
+            if (child is PaddockControl control
+                && control.DataContext is PaddockViewModel vm
+                && !vm.ExcludeFromQuickHide
+                && control.Visibility == Visibility.Visible)
+            {
+                anyVisible = true;
+                break;
+            }
+        }
+
+        var targetVisibility = anyVisible ? Visibility.Collapsed : Visibility.Visible;
+
+        foreach (var child in _canvas.Children)
+        {
+            if (child is PaddockControl control
+                && control.DataContext is PaddockViewModel vm
+                && !vm.ExcludeFromQuickHide)
+            {
+                control.Visibility = targetVisibility;
+            }
+        }
+    }
+
     private void AddPaddockToCanvas(PaddockModel model)
     {
         if (_canvas is null)
