@@ -241,20 +241,21 @@ public partial class PaddockControl : UserControl
 
     private void Icon_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (sender is FrameworkElement element)
-        {
-            _iconDragStart = e.GetPosition(element);
-            _iconDragStarted = false;
-        }
-    }
+        if (sender is not FrameworkElement element)
+            return;
 
-    private void Icon_DoubleClick(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is FrameworkElement { DataContext: IconViewModel icon })
+        // Double-click launches the icon. StackPanel has no MouseDoubleClick event,
+        // so we detect it via ClickCount on the regular mouse-down event.
+        if (e.ClickCount == 2 && element.DataContext is IconViewModel icon)
         {
             icon.Launch();
+            _iconDragStarted = false;
             e.Handled = true;
+            return;
         }
+
+        _iconDragStart = e.GetPosition(element);
+        _iconDragStarted = false;
     }
 
     private void Icon_RightClick(object sender, MouseButtonEventArgs e)
