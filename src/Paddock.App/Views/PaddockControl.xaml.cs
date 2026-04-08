@@ -103,7 +103,8 @@ public partial class PaddockControl : UserControl
             return;
 
         _isDragging = false;
-        _dragOriginPosition = e.GetPosition(Parent as Canvas ?? this);
+        IInputElement reference = (Parent as Canvas) ?? (IInputElement)this;
+        _dragOriginPosition = e.GetPosition(reference);
         ViewModel.BeginDrag(e.GetPosition(this));
         CaptureMouse();
     }
