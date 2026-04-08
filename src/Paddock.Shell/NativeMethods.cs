@@ -22,19 +22,6 @@ internal static partial class NativeMethods
         string? lpszWindow);
 
     [LibraryImport("user32.dll", SetLastError = true)]
-    internal static partial IntPtr SendMessageTimeoutW(
-        IntPtr hWnd,
-        uint msg,
-        IntPtr wParam,
-        IntPtr lParam,
-        uint fuFlags,
-        uint uTimeout,
-        out IntPtr lpdwResult);
-
-    [LibraryImport("user32.dll", SetLastError = true)]
-    internal static partial IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
-
-    [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
@@ -54,11 +41,6 @@ internal static partial class NativeMethods
     internal const uint LVM_GETITEMCOUNT = 0x1004;
     internal const uint LVM_GETITEMPOSITION = 0x1010;
     internal const uint LVM_SETITEMPOSITION = 0x100F;
-
-    // -- Message constants --
-
-    internal const uint SMTO_NORMAL = 0x0000;
-    internal const uint WM_SPAWN_WORKER = 0x052C;
 
     // -- Icon Extraction --
 
@@ -105,10 +87,28 @@ internal static partial class NativeMethods
     internal const int GWL_EXSTYLE = -20;
     internal const int WS_EX_TRANSPARENT = 0x00000020;
     internal const int WS_EX_TOOLWINDOW = 0x00000080;
+    internal const int WS_EX_APPWINDOW = 0x00040000;
 
     [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
     internal static partial IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
 
     [LibraryImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
     internal static partial IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+    // -- Z-order / positioning --
+
+    internal static readonly IntPtr HWND_BOTTOM = new(1);
+
+    internal const uint SWP_NOSIZE = 0x0001;
+    internal const uint SWP_NOMOVE = 0x0002;
+    internal const uint SWP_NOACTIVATE = 0x0010;
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool SetWindowPos(
+        IntPtr hWnd,
+        IntPtr hWndInsertAfter,
+        int X, int Y,
+        int cx, int cy,
+        uint uFlags);
 }

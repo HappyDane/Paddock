@@ -1,62 +1,40 @@
-using System.Runtime.InteropServices;
-
 namespace Paddock.Shell;
 
 /// <summary>
-/// Handles embedding the overlay window into the Windows desktop shell.
-/// Uses the Progman/WorkerW technique to render behind desktop icons.
+/// Configures the overlay window so it lives on the Windows desktop:
+/// hidden from Alt-Tab and the taskbar, and initially pinned to the
+/// bottom of the Z-order so real application windows naturally render
+/// on top of it — just like Stardock Fences.
 /// </summary>
 public class ShellHookService
 {
-    private IntPtr _workerW;
-
     /// <summary>
-    /// Finds or creates the WorkerW window behind desktop icons.
-    /// This is the target parent for our overlay window.
+    /// Applies the "desktop layer" window styles to the given window handle
+    /// and pushes it to the bottom of the Z-order. Call this once, right
+    /// after the window has been created.
     /// </summary>
-    public IntPtr GetDesktopWorkerW()
+    public void PinToDesktopLayer(IntPtr hwnd)
     {
-        // Step 1: Find the Progman window
-        var progman = NativeMethods.FindWindowW("Progman", null);
-        if (progman == IntPtr.Zero)
-            return IntPtr.Zero;
+        if (hwnd == IntPtr.Zero)
+            return;
 
-        // Step 2: Send the undocumented message to spawn a WorkerW behind icons
-        NativeMethods.SendMessageTimeoutW(
-            progman,
-            NativeMethods.WM_SPAWN_WORKER,
-            IntPtr.Zero,
-            IntPtr.Zero,
-            NativeMethods.SMTO_NORMAL,
-            1000,
-            out _);
+        // Adjust extended window styles:
+        //   + WS_EX_TOOLWINDOW  → hide from Alt-Tab and the taskbar
+        //   − WS_EX_APPWINDOW   → make sure WPF didn't add it
+        long exStyle = (long)NativeMethods.GetWindowLongPtr(hwnd, NativeMethods.GWL_EXSTYLE);
+        exStyle |= NativeMethods.WS_EX_TOOLWINDOW;
+        exStyle &= ~(long)NativeMethods.WS_EX_APPWINDOW;
+        NativeMethods.SetWindowLongPtr(hwnd, NativeMethods.GWL_EXSTYLE, (IntPtr)exStyle);
 
-        // Step 3: Find the WorkerW window that sits behind the desktop icons
-        _workerW = IntPtr.Zero;
-        NativeMethods.EnumWindows((hWnd, _) =>
-        {
-            var shellDef = NativeMethods.FindWindowExW(hWnd, IntPtr.Zero, "SHELLDLL_DefView", null);
-            if (shellDef != IntPtr.Zero)
-            {
-                // The WorkerW we want is the NEXT sibling after the one containing SHELLDLL_DefView
-                _workerW = NativeMethods.FindWindowExW(IntPtr.Zero, hWnd, "WorkerW", null);
-            }
-            return true;
-        }, IntPtr.Zero);
-
-        return _workerW;
-    }
-
-    /// <summary>
-    /// Embeds a WPF window as a child of the desktop WorkerW.
-    /// </summary>
-    public bool EmbedInDesktop(IntPtr wpfWindowHandle)
-    {
-        var workerW = GetDesktopWorkerW();
-        if (workerW == IntPtr.Zero)
-            return false;
-
-        NativeMethods.SetParent(wpfWindowHandle, workerW);
-        return true;
+        // Push the window to the bottom of the non-topmost Z-order without
+        // moving, resizing, or activating it. After this, Windows handles
+        // Z-order naturally: clicking the overlay brings paddocks forward
+        // for interaction (rename, drag, etc.), clicking any other window
+        // sends them back behind.
+        NativeMethods.SetWindowPos(
+            hwnd,
+            NativeMethods.HWND_BOTTOM,
+            0, 0, 0, 0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
     }
 }

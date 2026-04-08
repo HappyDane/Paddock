@@ -42,14 +42,12 @@ public partial class DesktopOverlay : Window
         Width = SystemParameters.VirtualScreenWidth;
         Height = SystemParameters.VirtualScreenHeight;
 
-        // Try to embed into the desktop shell (WorkerW)
-        bool embedded = app.ShellHookService.EmbedInDesktop(handle);
-
-        if (!embedded)
-        {
-            // Fall back to a normal transparent window
-            Topmost = false;
-        }
+        // Pin the window to the desktop layer: hidden from Alt-Tab and the
+        // taskbar, and pushed to the bottom of the Z-order so real apps
+        // render on top. Windows handles Z-order naturally after this:
+        // clicking a paddock brings it forward for interaction, clicking
+        // any other window sends the overlay back behind.
+        app.ShellHookService.PinToDesktopLayer(handle);
 
         _viewModel.Initialize(PaddockCanvas);
     }
