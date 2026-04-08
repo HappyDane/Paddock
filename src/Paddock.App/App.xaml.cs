@@ -51,6 +51,7 @@ public partial class App : Application
         };
 
         var menu = new System.Windows.Forms.ContextMenuStrip();
+        menu.Items.Add("New Paddock", null, (_, _) => CreateNewPaddock());
         menu.Items.Add("Show/Hide Paddocks", null, (_, _) => TogglePaddocks());
         menu.Items.Add("Settings", null, (_, _) => OpenSettings());
         menu.Items.Add("-");
@@ -58,6 +59,18 @@ public partial class App : Application
 
         _trayIcon.ContextMenuStrip = menu;
         _trayIcon.DoubleClick += (_, _) => TogglePaddocks();
+    }
+
+    private void CreateNewPaddock()
+    {
+        if (MainWindow is Views.DesktopOverlay overlay)
+        {
+            // Make sure the overlay is visible so the new paddock is actually shown.
+            if (!overlay.IsVisible)
+                overlay.Visibility = Visibility.Visible;
+
+            overlay.CreatePaddockAtScreenCenter();
+        }
     }
 
     private void TogglePaddocks()

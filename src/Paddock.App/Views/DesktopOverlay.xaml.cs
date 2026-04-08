@@ -180,6 +180,30 @@ public partial class DesktopOverlay : Window
         e.Handled = true;
     }
 
+    /// <summary>
+    /// Creates a new paddock at the centre of the primary screen. Used by
+    /// the tray menu so users always have a reliable creation entry point,
+    /// even when the overlay window is embedded behind the shell and cannot
+    /// receive right-click-drag input.
+    /// </summary>
+    public void CreatePaddockAtScreenCenter()
+    {
+        const double defaultWidth = 300;
+        const double defaultHeight = 250;
+
+        double canvasWidth = PaddockCanvas.ActualWidth > 0
+            ? PaddockCanvas.ActualWidth
+            : SystemParameters.PrimaryScreenWidth;
+        double canvasHeight = PaddockCanvas.ActualHeight > 0
+            ? PaddockCanvas.ActualHeight
+            : SystemParameters.PrimaryScreenHeight;
+
+        double x = Math.Max(0, (canvasWidth - defaultWidth) / 2);
+        double y = Math.Max(0, (canvasHeight - defaultHeight) / 2);
+
+        _viewModel.BeginCreatePaddock(new Rect(x, y, defaultWidth, defaultHeight));
+    }
+
     private void DismissCreatePopup()
     {
         CreatePopup.Visibility = Visibility.Collapsed;
