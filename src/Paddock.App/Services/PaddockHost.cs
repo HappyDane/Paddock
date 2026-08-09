@@ -5,6 +5,7 @@ using Paddock.App.Helpers;
 using Paddock.App.ViewModels;
 using Paddock.App.Views;
 using Paddock.Core.Models;
+using Paddock.Core.Services;
 
 namespace Paddock.App.Services;
 
@@ -50,9 +51,29 @@ internal sealed class PaddockHost : IDisposable
             CreateWindow(model);
         }
 
-        _zOrderTimer.Start();
+        UpdateZOrderTimer();
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
         _app.DesktopIconService.WatchStore(OnStoreChanged);
+
+        LogStartupState();
+    }
+
+    /// <summary>
+    /// One-time snapshot of what we restored and onto what. Cheap, and the first
+    /// thing worth knowing when a layout comes back looking wrong.
+    /// </summary>
+    private void LogStartupState()
+    {
+        var monitors = ScreenHelper.GetWorkAreas();
+        Log.Info($"{_windows.Count} paddock(s) restored across {monitors.Count} monitor(s) " +
+                 $"at {ScreenHelper.DipScale:0.##}x scale. Store: {_app.IconStore.StoreRoot}");
+
+        foreach (var window in _windows)
+        {
+            var vm = window.ViewModel;
+            Log.Info($"  \"{vm.Title}\" at {vm.X:0},{vm.Y:0} {vm.Width:0}x{vm.Height:0} " +
+                     $"with {vm.Icons.Count} icon(s).");
+        }
     }
 
     /// <summary>Asks the user to draw an area, then creates a paddock there.</summary>
@@ -83,6 +104,7 @@ internal sealed class PaddockHost : IDisposable
 
         var window = CreateWindow(model);
         window.PinToDesktop();
+        UpdateZOrderTimer();
     }
 
     internal void RemovePaddock(PaddockWindow window)
@@ -95,6 +117,7 @@ internal sealed class PaddockHost : IDisposable
         // Deleting the paddock moves its items back onto the desktop.
         _app.PaddockManager.DeletePaddock(paddockId);
         _app.DesktopIconService.NotifyShellOfDesktopChange();
+        UpdateZOrderTimer();
     }
 
     // --- Visibility ---
@@ -120,6 +143,22 @@ internal sealed class PaddockHost : IDisposable
                 window.Hide();
             }
         }
+
+        UpdateZOrderTimer();
+    }
+
+    /// <summary>
+    /// The re-pin timer only earns its keep while something is on screen; with
+    /// every paddock hidden it would just be waking the UI thread.
+    /// </summary>
+    private void UpdateZOrderTimer()
+    {
+        var needed = _windows.Any(w => w.IsVisible);
+
+        if (needed && !_zOrderTimer.IsEnabled)
+            _zOrderTimer.Start();
+        else if (!needed && _zOrderTimer.IsEnabled)
+            _zOrderTimer.Stop();
     }
 
     // --- Contents ---
@@ -133,12 +172,15 @@ internal sealed class PaddockHost : IDisposable
         var manager = _app.PaddockManager;
         var restored = 0;
 
-        foreach (var paddock in manager.GetPaddocks().ToList())
+        using (manager.DeferSave())
         {
-            foreach (var icon in paddock.Icons.ToList())
+            foreach (var paddock in manager.GetPaddocks().ToList())
             {
-                if (manager.EjectIcon(paddock.Id, icon.DesktopPath) is not null)
-                    restored++;
+                foreach (var icon in paddock.Icons.ToList())
+                {
+                    if (manager.EjectIcon(paddock.Id, icon.DesktopPath) is not null)
+                        restored++;
+                }
             }
         }
 
@@ -249,6 +291,7 @@ internal sealed class PaddockHost : IDisposable
     {
         _app.Dispatcher.InvokeAsync(() =>
         {
+            ScreenHelper.Invalidate();
             ClampAllToMonitors();
 
             foreach (var window in _windows)

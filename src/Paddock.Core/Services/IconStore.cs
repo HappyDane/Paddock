@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace Paddock.Core.Services;
 
 /// <summary>
@@ -98,7 +96,7 @@ public class IconStore
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"IconStore: failed to move '{source}' into paddock '{paddockId}': {ex.Message}");
+            Log.Error($"Could not move '{source}' into paddock '{paddockId}'.", ex);
             return null;
         }
     }
@@ -129,7 +127,7 @@ public class IconStore
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"IconStore: failed to move '{source}' to the desktop: {ex.Message}");
+            Log.Error($"Could not move '{source}' back to the desktop.", ex);
             return null;
         }
     }
@@ -151,7 +149,7 @@ public class IconStore
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"IconStore: failed to list paddock '{paddockId}': {ex.Message}");
+            Log.Warn($"Could not list paddock '{paddockId}': {ex.Message}");
             return [];
         }
     }
@@ -177,7 +175,7 @@ public class IconStore
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"IconStore: failed to remove folder for paddock '{paddockId}': {ex.Message}");
+            Log.Warn($"Could not remove the folder for paddock '{paddockId}': {ex.Message}");
         }
     }
 
@@ -233,7 +231,7 @@ public class IconStore
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"IconStore: cannot resolve parent of '{path}': {ex.Message}");
+            Log.Warn($"Cannot resolve the parent of '{path}': {ex.Message}");
             return null;
         }
     }

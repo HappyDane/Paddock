@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Paddock.Core.Services;
 
 namespace Paddock.Shell;
 
@@ -25,7 +26,17 @@ public class ShellHookService
     /// <summary>The message to forward to <see cref="EnforceDesktopZOrder"/>.</summary>
     public const int WindowPosChangingMessage = NativeMethods.WM_WINDOWPOSCHANGING;
 
+    /// <summary>
+    /// Minimum gap between attempts to find the icon view again, in ms.
+    /// WM_WINDOWPOSCHANGING can arrive dozens of times a second while a paddock
+    /// is dragged, and when the view genuinely cannot be found (desktop icons
+    /// turned off, say) an unthrottled search would run on every one of them.
+    /// </summary>
+    private const long ResolveThrottleMs = 1000;
+
     private IntPtr _desktopWindow;
+    private IntPtr _loggedAnchor;
+    private long _lastResolveTicks;
 
     /// <summary>
     /// The top-level window that hosts the desktop icons — normally Progman,
@@ -42,7 +53,23 @@ public class ShellHookService
         if (HostsDesktopIcons(_desktopWindow))
             return _desktopWindow;
 
+        var now = Environment.TickCount64;
+        if (_desktopWindow != IntPtr.Zero && now - _lastResolveTicks < ResolveThrottleMs)
+            return _desktopWindow;
+
+        _lastResolveTicks = now;
         _desktopWindow = ResolveDesktopWindow();
+
+        // Worth a line in the log — but only when it actually changes: if
+        // paddocks ever end up invisible, the window we chose to sit on top of
+        // is the first thing to check.
+        if (_desktopWindow != _loggedAnchor)
+        {
+            _loggedAnchor = _desktopWindow;
+            Log.Info($"Desktop z-order anchor: {NativeMethods.GetWindowClassName(_desktopWindow)} " +
+                     $"(0x{_desktopWindow.ToInt64():X}).");
+        }
+
         return _desktopWindow;
     }
 

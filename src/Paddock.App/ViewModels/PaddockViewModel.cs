@@ -20,6 +20,10 @@ public class PaddockViewModel : INotifyPropertyChanged
     private bool _isRenaming;
     private string _renameText;
 
+    // Frozen brushes, rebuilt only when the style changes.
+    private Brush? _backgroundBrush;
+    private Brush? _borderBrush;
+
     public event Action? RemoveRequested;
 
     public PaddockViewModel(PaddockModel model, PaddockManager manager)
@@ -166,27 +170,9 @@ public class PaddockViewModel : INotifyPropertyChanged
     /// brush rather than on the element's Opacity so that icons and labels stay
     /// fully opaque on top of a see-through panel.
     /// </summary>
-    public Brush BackgroundBrush
-    {
-        get
-        {
-            var colour = ParseColour(_model.Style.BackgroundColor, FallbackBackground);
-            var alpha = (byte)Math.Clamp(_model.Style.Opacity * 255, 0, 255);
-            var brush = new SolidColorBrush(Color.FromArgb(alpha, colour.R, colour.G, colour.B));
-            brush.Freeze();
-            return brush;
-        }
-    }
+    public Brush BackgroundBrush => _backgroundBrush ??= BuildBackgroundBrush();
 
-    public Brush BorderBrush
-    {
-        get
-        {
-            var brush = new SolidColorBrush(ParseColour(_model.Style.BorderColor, Colors.Transparent));
-            brush.Freeze();
-            return brush;
-        }
-    }
+    public Brush BorderBrush => _borderBrush ??= BuildBorderBrush();
 
     public Thickness BorderThickness => new(_model.Style.BorderThickness);
 
@@ -198,6 +184,7 @@ public class PaddockViewModel : INotifyPropertyChanged
         set
         {
             _model.Style.BackgroundColor = value;
+            InvalidateBrushes();
             OnPropertyChanged();
             OnPropertyChanged(nameof(BackgroundBrush));
             _manager.SaveLayout();
@@ -210,6 +197,7 @@ public class PaddockViewModel : INotifyPropertyChanged
         set
         {
             _model.Style.Opacity = value;
+            InvalidateBrushes();
             OnPropertyChanged();
             OnPropertyChanged(nameof(BackgroundBrush));
             _manager.SaveLayout();
@@ -238,13 +226,86 @@ public class PaddockViewModel : INotifyPropertyChanged
 
     public void RefreshIcons()
     {
-        Icons.Clear();
-        foreach (var entry in PaddockManager.GetSortedIcons(_model))
-        {
-            Icons.Add(new IconViewModel(entry));
-        }
+        var desired = PaddockManager.GetSortedIcons(_model);
+
+        if (MatchesCurrentIcons(desired))
+            return;
+
+        ReconcileIcons(desired);
 
         OnPropertyChanged(nameof(EmptyHintVisibility));
+    }
+
+    /// <summary>
+    /// Brings the icon list in line with <paramref name="desired"/> using the
+    /// fewest possible collection changes: existing view models are kept (so
+    /// their icons, cached or still loading, survive), and dropping one file into
+    /// a full paddock costs a single insert rather than a full rebuild.
+    /// </summary>
+    private void ReconcileIcons(List<IconEntry> desired)
+    {
+        var wanted = new HashSet<string>(
+            desired.Select(entry => entry.DesktopPath),
+            StringComparer.OrdinalIgnoreCase);
+
+        for (var i = Icons.Count - 1; i >= 0; i--)
+        {
+            if (!wanted.Contains(Icons[i].FullPath))
+                Icons.RemoveAt(i);
+        }
+
+        for (var index = 0; index < desired.Count; index++)
+        {
+            var path = desired[index].DesktopPath;
+
+            if (index < Icons.Count && PathEquals(Icons[index].FullPath, path))
+                continue;
+
+            var existing = IndexOfIcon(path, index);
+
+            if (existing >= 0)
+                Icons.Move(existing, index);
+            else
+                Icons.Insert(index, new IconViewModel(desired[index]));
+        }
+
+        while (Icons.Count > desired.Count)
+        {
+            Icons.RemoveAt(Icons.Count - 1);
+        }
+    }
+
+    private int IndexOfIcon(string path, int startAt)
+    {
+        for (var i = startAt; i < Icons.Count; i++)
+        {
+            if (PathEquals(Icons[i].FullPath, path))
+                return i;
+        }
+
+        return -1;
+    }
+
+    private static bool PathEquals(string a, string b)
+        => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when the grid already shows exactly these items in this order. The
+    /// store watcher fires for Paddock's own moves too, so "nothing changed" is
+    /// the common case and should cost nothing.
+    /// </summary>
+    private bool MatchesCurrentIcons(List<IconEntry> desired)
+    {
+        if (desired.Count != Icons.Count)
+            return false;
+
+        for (var i = 0; i < desired.Count; i++)
+        {
+            if (!PathEquals(desired[i].DesktopPath, Icons[i].FullPath))
+                return false;
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -287,12 +348,18 @@ public class PaddockViewModel : INotifyPropertyChanged
         RefreshIcons();
     }
 
-    /// <summary>Adds several items in one pass, refreshing the grid once.</summary>
+    /// <summary>
+    /// Adds several items in one pass: one settings write and one grid refresh
+    /// for the whole batch, however many items there are.
+    /// </summary>
     public void AddIcons(IEnumerable<string> paths)
     {
-        foreach (var path in paths)
+        using (_manager.DeferSave())
         {
-            _manager.AddIconToPaddock(Id, path);
+            foreach (var path in paths)
+            {
+                _manager.AddIconToPaddock(Id, path);
+            }
         }
 
         RefreshIcons();
@@ -381,6 +448,29 @@ public class PaddockViewModel : INotifyPropertyChanged
     public void Remove()
     {
         RemoveRequested?.Invoke();
+    }
+
+    private Brush BuildBackgroundBrush()
+    {
+        var colour = ParseColour(_model.Style.BackgroundColor, FallbackBackground);
+        var alpha = (byte)Math.Clamp(_model.Style.Opacity * 255, 0, 255);
+        var brush = new SolidColorBrush(Color.FromArgb(alpha, colour.R, colour.G, colour.B));
+        brush.Freeze();
+        return brush;
+    }
+
+    private Brush BuildBorderBrush()
+    {
+        var brush = new SolidColorBrush(ParseColour(_model.Style.BorderColor, Colors.Transparent));
+        brush.Freeze();
+        return brush;
+    }
+
+    /// <summary>Forces the cached brushes to be rebuilt on next use.</summary>
+    private void InvalidateBrushes()
+    {
+        _backgroundBrush = null;
+        _borderBrush = null;
     }
 
     private static Color ParseColour(string value, Color fallback)

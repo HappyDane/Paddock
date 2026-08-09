@@ -12,6 +12,10 @@
     <SolidColorBrush x:Key="PaddockIconText" Color="#1C1C1E" />
     <SolidColorBrush x:Key="PaddockGripDot" Color="#C7C7CC" />
 
+    <!-- Icon hover / drop feedback -->
+    <SolidColorBrush x:Key="PaddockIconHover" Color="#14000000" />
+    <SolidColorBrush x:Key="PaddockDropHighlight" Color="#990A84FF" />
+
     <!-- Close button -->
     <SolidColorBrush x:Key="PaddockCloseBackground" Color="#E5E5EA" />
     <SolidColorBrush x:Key="PaddockCloseText" Color="#8E8E93" />

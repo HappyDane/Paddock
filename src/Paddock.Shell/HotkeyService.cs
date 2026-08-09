@@ -1,6 +1,6 @@
-using System.Diagnostics;
 using System.Windows.Input;
 using System.Windows.Interop;
+using Paddock.Core.Services;
 
 namespace Paddock.Shell;
 
@@ -44,7 +44,7 @@ public sealed class HotkeyService : IDisposable
 
         if (!NativeMethods.RegisterHotKey(_source.Handle, id, modifiers | NativeMethods.MOD_NOREPEAT, virtualKey))
         {
-            Debug.WriteLine($"HotkeyService: '{hotkey}' is unavailable (already registered by another app?).");
+            Log.Warn($"Hotkey '{hotkey}' is unavailable — another application already owns it.");
             return false;
         }
 

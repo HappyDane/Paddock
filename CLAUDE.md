@@ -72,7 +72,14 @@ Build the `Paddock.Installer` project in Visual Studio to produce an MSIX packag
 Requires the Windows Application Packaging Project tooling.
 
 ## Key Patterns
-- **Settings**: JSON file at `%AppData%/Paddock/settings.json`
+- **Settings**: JSON file at `%AppData%/Paddock/settings.json` (see `AppPaths`).
+  Wrap bulk changes in `PaddockManager.DeferSave()` so they cost one write.
+- **Diagnostics**: use `Log` (Core), not `Debug.WriteLine` — the latter compiles
+  out of Release, which is exactly when you need to know what happened. The log
+  is at `%AppData%/Paddock/paddock.log`, reachable from the tray menu.
+- **Icons load off-thread**: `IconExtractor.RequestIcon` queues work on a
+  dedicated STA thread and hands back a frozen `BitmapSource`. Never call the
+  blocking `GetIcon` from the UI thread — resolving a `.lnk` can hit the network.
 - **Naming**: PascalCase for public members, _camelCase for private fields
 - **Nullability**: Enabled project-wide — no nullable warnings allowed
 - **File-scoped namespaces**: Use `namespace Foo;` not `namespace Foo { }`

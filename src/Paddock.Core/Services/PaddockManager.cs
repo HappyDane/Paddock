@@ -289,6 +289,12 @@ public class PaddockManager
         _settingsService.Save();
     }
 
+    /// <summary>
+    /// Batches the settings writes of a bulk operation into a single write.
+    /// Dispose the returned scope to flush.
+    /// </summary>
+    public IDisposable DeferSave() => _settingsService.DeferSave();
+
     private static IconEntry? FindEntry(PaddockModel paddock, string path)
         => paddock.Icons.FirstOrDefault(i =>
             string.Equals(i.DesktopPath, path, StringComparison.OrdinalIgnoreCase));

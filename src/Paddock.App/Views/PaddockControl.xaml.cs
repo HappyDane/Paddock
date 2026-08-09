@@ -7,6 +7,7 @@ using System.Windows.Threading;
 using Paddock.App.Helpers;
 using Paddock.App.ViewModels;
 using Paddock.Core.Models;
+using Paddock.Core.Services;
 using Paddock.Shell;
 
 namespace Paddock.App.Views;
@@ -246,15 +247,27 @@ public partial class PaddockControl : UserControl
 
     private void Paddock_DragOver(object sender, DragEventArgs e)
     {
-        var accepted = e.Data.GetDataPresent(typeof(IconDragData))
-                       || e.Data.GetDataPresent(DataFormats.FileDrop);
-
-        e.Effects = accepted ? DragDropEffects.Move : DragDropEffects.None;
+        e.Effects = CanAccept(e) ? DragDropEffects.Move : DragDropEffects.None;
         e.Handled = true;
     }
 
+    private void Paddock_DragEnter(object sender, DragEventArgs e)
+    {
+        if (CanAccept(e))
+            DropHighlight.Visibility = Visibility.Visible;
+    }
+
+    private void Paddock_DragLeave(object sender, DragEventArgs e)
+        => DropHighlight.Visibility = Visibility.Collapsed;
+
+    private static bool CanAccept(DragEventArgs e)
+        => e.Data.GetDataPresent(typeof(IconDragData))
+           || e.Data.GetDataPresent(DataFormats.FileDrop);
+
     private void Paddock_Drop(object sender, DragEventArgs e)
     {
+        DropHighlight.Visibility = Visibility.Collapsed;
+
         var sourcePaddockId = ViewModel.HandleDrop(e);
 
         if (sourcePaddockId is not null)
@@ -377,13 +390,26 @@ public partial class PaddockControl : UserControl
         ViewModel.ToggleRollUp();
     }
 
-    private void ContextMenu_CollectDesktopItems(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Moves a whole category of desktop items into this paddock. The category
+    /// comes from the menu item's Tag, and the count is always confirmed first —
+    /// this moves real files.
+    /// </summary>
+    private void ContextMenu_FillFromDesktop(object sender, RoutedEventArgs e)
     {
-        var items = CurrentApp.DesktopIconService.GetDesktopItems();
+        if (sender is not MenuItem { Tag: string tag }
+            || !Enum.TryParse<DesktopItemCategory>(tag, out var category))
+        {
+            return;
+        }
+
+        var items = DesktopItemFilter.Filter(CurrentApp.DesktopIconService.GetDesktopItems(), category);
+        var description = DesktopItemFilter.Describe(category);
+
         if (items.Count == 0)
         {
             MessageBox.Show(
-                "There are no desktop items to collect.",
+                $"There are no {description} on the desktop to collect.",
                 "Paddock",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -391,7 +417,7 @@ public partial class PaddockControl : UserControl
         }
 
         var answer = MessageBox.Show(
-            $"Move {items.Count} desktop item(s) into \"{ViewModel.Title}\"?\n\n" +
+            $"Move {items.Count} {description} into \"{ViewModel.Title}\"?\n\n" +
             "They will be moved off the desktop into this paddock's folder, and " +
             "go back to the desktop if you drag them out or remove the paddock.",
             "Paddock",

@@ -17,7 +17,7 @@ The foundation. Everything needed to replace a cluttered desktop with organized 
 - [x] Paddock drag-to-move with per-monitor edge and neighbour snapping
 - [x] Resize from the bottom-right grip, clamped to the monitor
 - [x] Icons really leave the desktop: files move into the paddock's own folder
-- [x] Icon drag in / out / between paddocks, plus "Collect Desktop Items"
+- [x] Icon drag in / out / between paddocks, plus "Fill from Desktop" by category
 - [x] Restore-everything escape hatch (tray → Restore All Icons to Desktop)
 - [x] Reconciliation on startup and on external changes (FileSystemWatcher)
 - [x] Sort icons by name, date, type, size — persisted per paddock
@@ -29,9 +29,13 @@ The foundation. Everything needed to replace a cluttered desktop with organized 
 - [x] Resolution / monitor change handling (clamp per monitor)
 - [x] Run-on-startup registry integration
 - [x] Layout snapshots (corrals) — save/restore/switch/export/import
+- [x] Background icon loading, batched settings writes, cached monitor geometry
+- [x] Single-instance guard, crash logging to %AppData%/Paddock/paddock.log
+- [x] Corrupt settings.json is preserved rather than silently discarded
 
 ### TODO
 - [ ] Collect the icons that were sitting underneath a newly drawn paddock
+- [ ] Multi-select inside a paddock (drag, launch and delete several at once)
 - [ ] Free icon placement inside a paddock (currently a reflowing grid)
 - [ ] Colour picker in the settings UI
 - [ ] Fade animation on quick hide, smooth roll-up animation

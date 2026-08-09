@@ -92,12 +92,19 @@ public class LayoutEngine
         }
     }
 
+    /// <summary>Smallest usable paddock — a title strip wide enough to grab.</summary>
+    public const double MinPaddockWidth = 140;
+
+    public const double MinPaddockHeight = 32;
+
     /// <summary>Clamps a single paddock into the given region.</summary>
     public void ClampToBounds(PaddockModel paddock, LayoutBounds bounds)
     {
-        // Never grow a paddock beyond the region it has to fit into.
-        paddock.Width = Math.Min(paddock.Width, bounds.Width);
-        paddock.Height = Math.Min(paddock.Height, bounds.Height);
+        // Never grow a paddock beyond the region it has to fit into, and never
+        // leave it too small to see or grab — a hand-edited or truncated
+        // settings.json should not produce an invisible paddock.
+        paddock.Width = Math.Max(MinPaddockWidth, Math.Min(paddock.Width, bounds.Width));
+        paddock.Height = Math.Max(MinPaddockHeight, Math.Min(paddock.Height, bounds.Height));
 
         if (paddock.X + paddock.Width > bounds.Right)
             paddock.X = Math.Max(bounds.Left, bounds.Right - paddock.Width);

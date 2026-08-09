@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using Paddock.Core.Services;
 
@@ -79,7 +78,7 @@ public sealed class DesktopIconService : IDisposable
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"DesktopIconService: cannot list '{DesktopRoot}': {ex.Message}");
+            Log.Warn($"Cannot list the desktop folder '{DesktopRoot}': {ex.Message}");
         }
 
         return items;
@@ -114,7 +113,7 @@ public sealed class DesktopIconService : IDisposable
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"DesktopIconService: cannot watch '{StoreRoot}': {ex.Message}");
+            Log.Error($"Cannot watch '{StoreRoot}' for changes.", ex);
         }
     }
 
@@ -136,7 +135,7 @@ public sealed class DesktopIconService : IDisposable
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"DesktopIconService: SHChangeNotify failed: {ex.Message}");
+            Log.Warn($"SHChangeNotify failed: {ex.Message}");
         }
         finally
         {
@@ -182,7 +181,7 @@ public sealed class DesktopIconService : IDisposable
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"DesktopIconService: cannot prepare '{StoreRoot}': {ex.Message}");
+            Log.Error($"Cannot prepare the paddock store at '{StoreRoot}'.", ex);
         }
     }
 
@@ -203,7 +202,7 @@ public sealed class DesktopIconService : IDisposable
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"DesktopIconService: cannot read attributes of '{path}': {ex.Message}");
+            Log.Warn($"Cannot read attributes of '{path}': {ex.Message}");
             return true;
         }
     }

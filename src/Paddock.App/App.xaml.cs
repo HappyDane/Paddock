@@ -9,8 +9,12 @@ namespace Paddock.App;
 
 public partial class App : Application
 {
+    /// <summary>Per-user name, so Paddock still runs once per session on a shared machine.</summary>
+    private const string SingleInstanceMutexName = @"Local\Paddock.SingleInstance";
+
     private System.Windows.Forms.NotifyIcon? _trayIcon;
     private HotkeyService? _hotkeys;
+    private System.Threading.Mutex? _instanceMutex;
 
     public SettingsService Settings { get; private set; } = null!;
     public PaddockManager PaddockManager { get; private set; } = null!;
@@ -27,6 +31,18 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        InstallCrashHandlers();
+        Log.Info($"Paddock starting (v{typeof(App).Assembly.GetName().Version}).");
+
+        if (!ClaimSingleInstance())
+        {
+            // A second copy would draw a duplicate set of paddocks and fight the
+            // first one over settings.json.
+            Log.Info("Another instance is already running — exiting.");
+            Shutdown();
+            return;
+        }
 
         // Services
         Settings = new SettingsService();
@@ -54,7 +70,60 @@ public partial class App : Application
         InitializeHotkeys();
 
         if (Host.PaddockCount == 0)
-            ShowFirstRunHint();
+            ShowNoPaddocksHint();
+    }
+
+    /// <summary>
+    /// Takes the single-instance lock, or reports that someone else holds it.
+    /// </summary>
+    private bool ClaimSingleInstance()
+    {
+        try
+        {
+            _instanceMutex = new System.Threading.Mutex(initiallyOwned: true, SingleInstanceMutexName, out var isFirst);
+
+            if (isFirst)
+                return true;
+
+            _instanceMutex.Dispose();
+            _instanceMutex = null;
+            return false;
+        }
+        catch (Exception ex)
+        {
+            // Better to run than to refuse over a lock we could not take.
+            Log.Warn($"Could not check for another instance: {ex.Message}");
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// A tray app has no window to show an error in, so an unhandled exception
+    /// would simply make Paddock vanish. Anything that escapes a UI callback is
+    /// logged and swallowed — a failed drop or menu click should never take the
+    /// whole app (and the user's paddocks) down with it.
+    /// </summary>
+    private void InstallCrashHandlers()
+    {
+        DispatcherUnhandledException += (_, args) =>
+        {
+            Log.Error("Unhandled exception on the UI thread.", args.Exception);
+            args.Handled = true;
+        };
+
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            if (args.ExceptionObject is Exception exception)
+                Log.Error("Unhandled exception (terminating).", exception);
+            else
+                Log.Error($"Unhandled non-exception fault: {args.ExceptionObject}");
+        };
+
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            Log.Error("Unobserved task exception.", args.Exception);
+            args.SetObserved();
+        };
     }
 
     /// <summary>
@@ -74,10 +143,10 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// With no paddocks yet there is nothing on screen, so point the user at
+    /// With no paddocks there is nothing on screen at all, so point the user at
     /// the tray menu rather than leaving them wondering whether it started.
     /// </summary>
-    private void ShowFirstRunHint()
+    private void ShowNoPaddocksHint()
     {
         _trayIcon?.ShowBalloonTip(
             7000,
@@ -101,6 +170,7 @@ public partial class App : Application
         menu.Items.Add("-");
         menu.Items.Add("Restore All Icons to Desktop", null, (_, _) => RestoreAllIcons());
         menu.Items.Add("Settings", null, (_, _) => OpenSettings());
+        menu.Items.Add("Open Settings Folder", null, (_, _) => OpenSettingsFolder());
         menu.Items.Add("-");
         menu.Items.Add("Exit", null, (_, _) => ExitApplication());
 
@@ -122,8 +192,7 @@ public partial class App : Application
 
         if (!_hotkeys.Register(Settings.Settings.QuickHideHotkey, TogglePaddocks))
         {
-            System.Diagnostics.Debug.WriteLine(
-                $"App: could not register quick-hide hotkey '{Settings.Settings.QuickHideHotkey}'.");
+            Log.Warn($"Quick-hide hotkey '{Settings.Settings.QuickHideHotkey}' could not be registered.");
         }
     }
 
@@ -161,6 +230,23 @@ public partial class App : Application
     {
         var settings = new Views.SettingsWindow();
         settings.ShowDialog();
+    }
+
+    /// <summary>Opens the folder holding settings.json and paddock.log.</summary>
+    private static void OpenSettingsFolder()
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = AppPaths.DataFolder,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Could not open '{AppPaths.DataFolder}'.", ex);
+        }
     }
 
     private void ExitApplication()
@@ -222,6 +308,16 @@ public partial class App : Application
         _hotkeys?.Dispose();
         Host?.Dispose();
         DesktopIconService?.Dispose();
+        IconExtractor?.Dispose();
+
+        if (_instanceMutex is not null)
+        {
+            _instanceMutex.ReleaseMutex();
+            _instanceMutex.Dispose();
+            _instanceMutex = null;
+        }
+
+        Log.Info("Paddock exited.");
 
         if (_trayIcon is not null)
         {

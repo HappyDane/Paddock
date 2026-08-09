@@ -1,5 +1,5 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Paddock.Core.Services;
 
 namespace Paddock.Shell;
 
@@ -238,7 +238,7 @@ public static class ShellContextMenu
         catch (Exception ex)
         {
             // Swallow errors — if COM fails we simply don't show a menu.
-            Debug.WriteLine($"ShellContextMenu.Show failed for '{filePath}': {ex.Message}");
+            Log.Error($"Could not show the shell context menu for '{filePath}'.", ex);
         }
         finally
         {
