@@ -7,7 +7,7 @@ namespace Paddock.Shell;
 /// </summary>
 internal static partial class NativeMethods
 {
-    // -- Window Management --
+    // -- Window management --
 
     [LibraryImport("user32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     internal static partial IntPtr FindWindowW(
@@ -21,46 +21,95 @@ internal static partial class NativeMethods
         string? lpszClass,
         string? lpszWindow);
 
-    [LibraryImport("user32.dll", SetLastError = true)]
-    internal static partial IntPtr SendMessageTimeoutW(
-        IntPtr hWnd,
-        uint msg,
-        IntPtr wParam,
-        IntPtr lParam,
-        uint fuFlags,
-        uint uTimeout,
-        out IntPtr lpdwResult);
-
-    [LibraryImport("user32.dll", SetLastError = true)]
-    internal static partial IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
-
-    [LibraryImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-
-    internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-    [LibraryImport("user32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
-    internal static partial int GetClassNameW(
-        IntPtr hWnd,
-        [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 2)] char[] lpClassName,
-        int nMaxCount);
-
-    // -- Desktop ListView (icon positions) --
-
+    /// <summary>Returns the shell's desktop window (Progman), or zero.</summary>
     [LibraryImport("user32.dll")]
     internal static partial IntPtr GetShellWindow();
 
-    internal const uint LVM_GETITEMCOUNT = 0x1004;
-    internal const uint LVM_GETITEMPOSITION = 0x1010;
-    internal const uint LVM_SETITEMPOSITION = 0x100F;
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+
+    /// <summary>Window class name, for diagnostics. Empty when unavailable.</summary>
+    internal static string GetWindowClassName(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero)
+            return string.Empty;
+
+        var buffer = new System.Text.StringBuilder(256);
+        return GetClassName(hWnd, buffer, buffer.Capacity) > 0 ? buffer.ToString() : string.Empty;
+    }
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool SetWindowPos(
+        IntPtr hWnd,
+        IntPtr hWndInsertAfter,
+        int x,
+        int y,
+        int cx,
+        int cy,
+        uint uFlags);
+
+    /// <summary>
+    /// Layout information passed with WM_WINDOWPOSCHANGING. Rewriting
+    /// <see cref="hwndInsertAfter"/> is how a window pins its own z-order.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct WINDOWPOS
+    {
+        internal IntPtr hwnd;
+        internal IntPtr hwndInsertAfter;
+        internal int x;
+        internal int y;
+        internal int cx;
+        internal int cy;
+        internal uint flags;
+    }
+
+    internal static readonly IntPtr HWND_BOTTOM = new(1);
+
+    internal const uint SWP_NOSIZE = 0x0001;
+    internal const uint SWP_NOMOVE = 0x0002;
+    internal const uint SWP_NOZORDER = 0x0004;
+    internal const uint SWP_NOACTIVATE = 0x0010;
+    internal const uint SWP_NOOWNERZORDER = 0x0200;
 
     // -- Message constants --
 
-    internal const uint SMTO_NORMAL = 0x0000;
-    internal const uint WM_SPAWN_WORKER = 0x052C;
+    internal const int WM_WINDOWPOSCHANGING = 0x0046;
+    internal const int WM_HOTKEY = 0x0312;
 
-    // -- Icon Extraction --
+    // -- Extended window styles --
+
+    internal const int GWL_EXSTYLE = -20;
+    internal const int WS_EX_TOOLWINDOW = 0x00000080;
+
+    [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+    internal static partial IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    [LibraryImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+    internal static partial IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+    // -- Global hotkeys --
+
+    internal const uint MOD_ALT = 0x0001;
+    internal const uint MOD_CONTROL = 0x0002;
+    internal const uint MOD_SHIFT = 0x0004;
+    internal const uint MOD_WIN = 0x0008;
+    internal const uint MOD_NOREPEAT = 0x4000;
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    // -- Icon extraction --
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     internal struct SHFILEINFO
@@ -76,8 +125,11 @@ internal static partial class NativeMethods
 
     internal const uint SHGFI_ICON = 0x000000100;
     internal const uint SHGFI_LARGEICON = 0x000000000;
-    internal const uint SHGFI_SMALLICON = 0x000000001;
     internal const uint SHGFI_USEFILEATTRIBUTES = 0x000000010;
+    internal const uint SHGFI_SYSICONINDEX = 0x000004000;
+
+    internal const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
+    internal const uint FILE_ATTRIBUTE_DIRECTORY = 0x00000010;
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     internal static extern IntPtr SHGetFileInfo(
@@ -91,24 +143,53 @@ internal static partial class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool DestroyIcon(IntPtr hIcon);
 
-    // -- SendMessage for ListView control --
+    // System image list sizes.
+    internal const int SHIL_LARGE = 0;
+    internal const int SHIL_EXTRALARGE = 2;
+    internal const int SHIL_JUMBO = 4;
 
-    [DllImport("user32.dll", CharSet = CharSet.Auto)]
-    internal static extern IntPtr SendMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    internal const int ILD_TRANSPARENT = 1;
 
-    // MAKELPARAM packs two 16-bit values into one IntPtr
-    internal static IntPtr MakeLParam(int low, int high)
-        => (IntPtr)((high << 16) | (low & 0xFFFF));
+    internal static readonly Guid IID_IImageList = new("46EB5926-582E-4017-9FDF-E8998DAA0950");
 
-    // -- Extended Window Styles --
+    [DllImport("shell32.dll")]
+    internal static extern int SHGetImageList(
+        int iImageList,
+        ref Guid riid,
+        out IImageList ppv);
 
-    internal const int GWL_EXSTYLE = -20;
-    internal const int WS_EX_TRANSPARENT = 0x00000020;
-    internal const int WS_EX_TOOLWINDOW = 0x00000080;
+    /// <summary>
+    /// Minimal IImageList declaration. Every method up to GetIcon must be
+    /// present and in order so the vtable slots line up; the ones we do not use
+    /// take opaque pointers instead of their real struct types.
+    /// </summary>
+    [ComImport]
+    [Guid("46EB5926-582E-4017-9FDF-E8998DAA0950")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IImageList
+    {
+        [PreserveSig] int Add(IntPtr hbmImage, IntPtr hbmMask, out int pi);
 
-    [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
-    internal static partial IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+        [PreserveSig] int ReplaceIcon(int i, IntPtr hicon, out int pi);
 
-    [LibraryImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
-    internal static partial IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+        [PreserveSig] int SetOverlayImage(int iImage, int iOverlay);
+
+        [PreserveSig] int Replace(int i, IntPtr hbmImage, IntPtr hbmMask);
+
+        [PreserveSig] int AddMasked(IntPtr hbmImage, int crMask, out int pi);
+
+        [PreserveSig] int Draw(IntPtr pimldp);
+
+        [PreserveSig] int Remove(int i);
+
+        [PreserveSig] int GetIcon(int i, int flags, out IntPtr picon);
+    }
+
+    // -- Shell change notification --
+
+    internal const int SHCNE_UPDATEDIR = 0x00001000;
+    internal const uint SHCNF_PATHW = 0x0005;
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    internal static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
 }

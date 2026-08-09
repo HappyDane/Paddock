@@ -1,62 +1,176 @@
 using System.Runtime.InteropServices;
+using Paddock.Core.Services;
 
 namespace Paddock.Shell;
 
 /// <summary>
-/// Handles embedding the overlay window into the Windows desktop shell.
-/// Uses the Progman/WorkerW technique to render behind desktop icons.
+/// Keeps Paddock's windows at "desktop level": above the wallpaper and the
+/// desktop icons, but below every ordinary application window.
+///
+/// The trick is <em>not</em> to reparent into the shell's WorkerW — a window
+/// living there is drawn behind the desktop icons and never receives mouse
+/// input. Instead each paddock stays a normal top-level window whose z-order is
+/// pinned directly above the shell's desktop window (Progman). Windows will
+/// happily raise other applications above it, but nothing can raise it above
+/// them, so paddocks behave like part of the desktop.
+///
+/// Two pieces are needed:
+/// <list type="number">
+/// <item><see cref="SendToDesktopLevel"/> once, when the window is created.</item>
+/// <item><see cref="EnforceDesktopZOrder"/> from the window's WM_WINDOWPOSCHANGING
+/// handler, so activation and focus changes cannot lift it out of place.</item>
+/// </list>
 /// </summary>
 public class ShellHookService
 {
-    private IntPtr _workerW;
+    /// <summary>The message to forward to <see cref="EnforceDesktopZOrder"/>.</summary>
+    public const int WindowPosChangingMessage = NativeMethods.WM_WINDOWPOSCHANGING;
 
     /// <summary>
-    /// Finds or creates the WorkerW window behind desktop icons.
-    /// This is the target parent for our overlay window.
+    /// Minimum gap between attempts to find the icon view again, in ms.
+    /// WM_WINDOWPOSCHANGING can arrive dozens of times a second while a paddock
+    /// is dragged, and when the view genuinely cannot be found (desktop icons
+    /// turned off, say) an unthrottled search would run on every one of them.
     /// </summary>
-    public IntPtr GetDesktopWorkerW()
+    private const long ResolveThrottleMs = 1000;
+
+    private IntPtr _desktopWindow;
+    private IntPtr _loggedAnchor;
+    private long _lastResolveTicks;
+
+    /// <summary>
+    /// The top-level window that hosts the desktop icons — normally Progman,
+    /// but on machines where the wallpaper is animated or slideshowed the icon
+    /// view lives in a WorkerW that sits above Progman. Anchoring to the wrong
+    /// one would leave paddocks hidden behind the desktop, so we look for the
+    /// window actually containing SHELLDLL_DefView.
+    ///
+    /// The result is cached but re-validated on every call, which also covers
+    /// Explorer restarting or switching wallpaper modes.
+    /// </summary>
+    public IntPtr GetDesktopWindow()
     {
-        // Step 1: Find the Progman window
-        var progman = NativeMethods.FindWindowW("Progman", null);
-        if (progman == IntPtr.Zero)
-            return IntPtr.Zero;
+        if (HostsDesktopIcons(_desktopWindow))
+            return _desktopWindow;
 
-        // Step 2: Send the undocumented message to spawn a WorkerW behind icons
-        NativeMethods.SendMessageTimeoutW(
-            progman,
-            NativeMethods.WM_SPAWN_WORKER,
-            IntPtr.Zero,
-            IntPtr.Zero,
-            NativeMethods.SMTO_NORMAL,
-            1000,
-            out _);
+        var now = Environment.TickCount64;
+        if (_desktopWindow != IntPtr.Zero && now - _lastResolveTicks < ResolveThrottleMs)
+            return _desktopWindow;
 
-        // Step 3: Find the WorkerW window that sits behind the desktop icons
-        _workerW = IntPtr.Zero;
-        NativeMethods.EnumWindows((hWnd, _) =>
+        _lastResolveTicks = now;
+        _desktopWindow = ResolveDesktopWindow();
+
+        // Worth a line in the log — but only when it actually changes: if
+        // paddocks ever end up invisible, the window we chose to sit on top of
+        // is the first thing to check.
+        if (_desktopWindow != _loggedAnchor)
         {
-            var shellDef = NativeMethods.FindWindowExW(hWnd, IntPtr.Zero, "SHELLDLL_DefView", null);
-            if (shellDef != IntPtr.Zero)
-            {
-                // The WorkerW we want is the NEXT sibling after the one containing SHELLDLL_DefView
-                _workerW = NativeMethods.FindWindowExW(IntPtr.Zero, hWnd, "WorkerW", null);
-            }
-            return true;
-        }, IntPtr.Zero);
+            _loggedAnchor = _desktopWindow;
+            Log.Info($"Desktop z-order anchor: {NativeMethods.GetWindowClassName(_desktopWindow)} " +
+                     $"(0x{_desktopWindow.ToInt64():X}).");
+        }
 
-        return _workerW;
+        return _desktopWindow;
     }
 
     /// <summary>
-    /// Embeds a WPF window as a child of the desktop WorkerW.
+    /// Marks the window as a tool window (no Alt-Tab entry, no taskbar button)
+    /// and drops it into the z-order slot just above the desktop.
+    /// Safe to call repeatedly.
     /// </summary>
-    public bool EmbedInDesktop(IntPtr wpfWindowHandle)
+    public void SendToDesktopLevel(IntPtr windowHandle)
     {
-        var workerW = GetDesktopWorkerW();
-        if (workerW == IntPtr.Zero)
+        if (windowHandle == IntPtr.Zero)
+            return;
+
+        var exStyle = (long)NativeMethods.GetWindowLongPtr(windowHandle, NativeMethods.GWL_EXSTYLE);
+        if ((exStyle & NativeMethods.WS_EX_TOOLWINDOW) == 0)
+        {
+            NativeMethods.SetWindowLongPtr(
+                windowHandle,
+                NativeMethods.GWL_EXSTYLE,
+                (IntPtr)(exStyle | NativeMethods.WS_EX_TOOLWINDOW));
+        }
+
+        NativeMethods.SetWindowPos(
+            windowHandle,
+            GetZOrderAnchor(windowHandle),
+            0, 0, 0, 0,
+            NativeMethods.SWP_NOMOVE
+            | NativeMethods.SWP_NOSIZE
+            | NativeMethods.SWP_NOACTIVATE
+            | NativeMethods.SWP_NOOWNERZORDER);
+    }
+
+    /// <summary>
+    /// Rewrites the pending WINDOWPOS so the window lands just above the
+    /// desktop, whatever z-order the system was about to give it. Call this
+    /// with the lParam of WM_WINDOWPOSCHANGING and let the message continue
+    /// to normal processing afterwards.
+    /// </summary>
+    /// <returns>True when the pending position was adjusted.</returns>
+    public bool EnforceDesktopZOrder(IntPtr lParam)
+    {
+        if (lParam == IntPtr.Zero)
             return false;
 
-        NativeMethods.SetParent(wpfWindowHandle, workerW);
+        var position = Marshal.PtrToStructure<NativeMethods.WINDOWPOS>(lParam);
+
+        // A plain move or resize leaves the z-order alone, so there is nothing
+        // to correct — and forcing one on every drag step would only cause
+        // needless z-order churn. Activation, by contrast, arrives with
+        // SWP_NOZORDER cleared and HWND_TOP requested: that is what we override.
+        if ((position.flags & NativeMethods.SWP_NOZORDER) != 0)
+            return false;
+
+        var anchor = GetZOrderAnchor(position.hwnd);
+        if (position.hwndInsertAfter == anchor)
+            return false;
+
+        position.hwndInsertAfter = anchor;
+
+        Marshal.StructureToPtr(position, lParam, fDeleteOld: false);
         return true;
+    }
+
+    /// <summary>
+    /// The window our paddocks sit directly on top of. Falls back to the bottom
+    /// of the z-order when the shell's desktop window cannot be found, which has
+    /// the same practical effect (the desktop is kept below normal windows).
+    /// </summary>
+    private IntPtr GetZOrderAnchor(IntPtr ownWindowHandle)
+    {
+        var desktop = GetDesktopWindow();
+        return desktop != IntPtr.Zero && desktop != ownWindowHandle
+            ? desktop
+            : NativeMethods.HWND_BOTTOM;
+    }
+
+    private static bool HostsDesktopIcons(IntPtr windowHandle)
+        => windowHandle != IntPtr.Zero
+           && NativeMethods.IsWindow(windowHandle)
+           && NativeMethods.FindWindowExW(windowHandle, IntPtr.Zero, "SHELLDLL_DefView", null) != IntPtr.Zero;
+
+    private static IntPtr ResolveDesktopWindow()
+    {
+        var progman = NativeMethods.GetShellWindow();
+        if (progman == IntPtr.Zero)
+            progman = NativeMethods.FindWindowW("Progman", null);
+
+        if (HostsDesktopIcons(progman))
+            return progman;
+
+        // Walk the top-level WorkerW windows looking for the one holding the
+        // desktop icon view.
+        var worker = IntPtr.Zero;
+        while ((worker = NativeMethods.FindWindowExW(IntPtr.Zero, worker, "WorkerW", null)) != IntPtr.Zero)
+        {
+            if (HostsDesktopIcons(worker))
+                return worker;
+        }
+
+        // No icon view at all (icons hidden, or an unusual shell) — Progman is
+        // still the right thing to sit on top of.
+        return progman;
     }
 }

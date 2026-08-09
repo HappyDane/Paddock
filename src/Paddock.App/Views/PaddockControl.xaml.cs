@@ -3,6 +3,8 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Threading;
+using Paddock.App.Helpers;
 using Paddock.App.ViewModels;
 using Paddock.Core.Models;
 using Paddock.Core.Services;
@@ -10,19 +12,23 @@ using Paddock.Shell;
 
 namespace Paddock.App.Views;
 
+/// <summary>
+/// The visible paddock: title strip, icon grid, and all of the mouse handling
+/// for moving, resizing and filling it. Geometry changes are applied to the
+/// hosting <see cref="PaddockWindow"/>, since each paddock is its own window.
+/// </summary>
 public partial class PaddockControl : UserControl
 {
-    private PaddockViewModel ViewModel => (PaddockViewModel)DataContext;
-    private System.ComponentModel.PropertyChangedEventHandler? _vmPropertyChangedHandler;
-
-    // Drag state tracking
-    private bool _isDragging;
-    private Point _dragOriginPosition;
-
-    // Minimum distance (pixels) before a mouse move counts as a drag
+    /// <summary>Minimum movement before a mouse-down turns into an icon drag.</summary>
     private const double MinDragDistance = 5;
 
-    // Icon drag state
+    private System.ComponentModel.PropertyChangedEventHandler? _vmPropertyChangedHandler;
+
+    // Window-drag state
+    private bool _isDraggingWindow;
+    private Point _dragGrabOffset;
+
+    // Icon-drag state
     private Point _iconDragStart;
     private bool _iconDragStarted;
 
@@ -32,15 +38,17 @@ public partial class PaddockControl : UserControl
         DataContextChanged += OnDataContextChanged;
     }
 
+    private PaddockViewModel ViewModel => (PaddockViewModel)DataContext;
+
+    private PaddockWindow? HostWindow => Window.GetWindow(this) as PaddockWindow;
+
+    private static App CurrentApp => (App)Application.Current;
+
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
-        // Unsubscribe from old ViewModel
         if (e.OldValue is PaddockViewModel oldVm && _vmPropertyChangedHandler is not null)
-        {
             oldVm.PropertyChanged -= _vmPropertyChangedHandler;
-        }
 
-        // Subscribe to new ViewModel
         if (e.NewValue is PaddockViewModel vm)
         {
             UpdateTitleVisibility(vm.TitleVisibility);
@@ -48,6 +56,8 @@ public partial class PaddockControl : UserControl
             {
                 if (args.PropertyName == nameof(PaddockViewModel.IsRenaming))
                     UpdateRenameState(vm.IsRenaming);
+                else if (args.PropertyName == nameof(PaddockViewModel.TitleVisibility))
+                    UpdateTitleVisibility(vm.TitleVisibility);
             };
             vm.PropertyChanged += _vmPropertyChangedHandler;
         }
@@ -57,15 +67,10 @@ public partial class PaddockControl : UserControl
 
     private void UpdateTitleVisibility(TitleVisibility mode)
     {
-        TitleText.Visibility = mode switch
-        {
-            TitleVisibility.Always => Visibility.Visible,
-            TitleVisibility.Hover => Visibility.Visible, // controlled by hover animation
-            TitleVisibility.Hidden => Visibility.Collapsed,
-            _ => Visibility.Visible
-        };
+        TitleText.Visibility = mode == TitleVisibility.Hidden
+            ? Visibility.Collapsed
+            : Visibility.Visible;
 
-        // For "Always" mode, keep title at full opacity even without hover
         if (mode == TitleVisibility.Always)
             TitleText.Opacity = 1.0;
     }
@@ -76,19 +81,28 @@ public partial class PaddockControl : UserControl
         {
             TitleText.Visibility = Visibility.Collapsed;
             RenameBox.Visibility = Visibility.Visible;
-            RenameBox.SelectAll();
-            RenameBox.Focus();
+
+            // Deferred: when rename is started from the context menu, the menu is
+            // still closing and would take focus straight back off the text box.
+            Dispatcher.InvokeAsync(
+                () =>
+                {
+                    // The window has to be active for the box to take keystrokes.
+                    HostWindow?.Activate();
+                    RenameBox.Focus();
+                    Keyboard.Focus(RenameBox);
+                    RenameBox.SelectAll();
+                },
+                DispatcherPriority.Input);
         }
         else
         {
             RenameBox.Visibility = Visibility.Collapsed;
-            TitleText.Visibility = ViewModel.TitleVisibility == TitleVisibility.Hidden
-                ? Visibility.Collapsed
-                : Visibility.Visible;
+            UpdateTitleVisibility(ViewModel.TitleVisibility);
         }
     }
 
-    // --- Title bar interactions ---
+    // --- Moving the paddock ---
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
@@ -102,75 +116,101 @@ public partial class PaddockControl : UserControl
         if (ViewModel.IsLocked || ViewModel.IsRenaming)
             return;
 
-        _isDragging = false;
-        IInputElement reference = (Parent as Canvas) ?? (IInputElement)this;
-        _dragOriginPosition = e.GetPosition(reference);
-        ViewModel.BeginDrag(e.GetPosition(this));
-        CaptureMouse();
+        var window = HostWindow;
+        if (window is null)
+            return;
+
+        var cursor = ScreenHelper.GetCursorPosition();
+        _dragGrabOffset = new Point(cursor.X - window.Left, cursor.Y - window.Top);
+        _isDraggingWindow = true;
+        TitleArea.CaptureMouse();
+        e.Handled = true;
     }
 
-    protected override void OnMouseMove(MouseEventArgs e)
+    private void TitleBar_MouseMove(object sender, MouseEventArgs e)
     {
-        base.OnMouseMove(e);
-
-        if (!IsMouseCaptured || ViewModel.IsLocked)
+        if (!_isDraggingWindow)
             return;
 
-        var canvas = Parent as Canvas;
-        if (canvas is null)
-            return;
-
-        var mousePos = e.GetPosition(canvas);
-
-        // Only start dragging after the mouse moves beyond the threshold
-        if (!_isDragging)
+        if (e.LeftButton != MouseButtonState.Pressed)
         {
-            var delta = mousePos - _dragOriginPosition;
-            if (Math.Abs(delta.X) < MinDragDistance && Math.Abs(delta.Y) < MinDragDistance)
-                return;
-            _isDragging = true;
+            EndWindowDrag();
+            return;
         }
 
-        var newX = mousePos.X - ViewModel.DragStartOffset.X;
-        var newY = mousePos.Y - ViewModel.DragStartOffset.Y;
+        var window = HostWindow;
+        if (window is null)
+            return;
 
-        // Apply snap-to-edge if enabled
-        var app = (App)Application.Current;
-        if (app.Settings.Settings.SnapEnabled)
+        var cursor = ScreenHelper.GetCursorPosition();
+        var targetX = cursor.X - _dragGrabOffset.X;
+        var targetY = cursor.Y - _dragGrabOffset.Y;
+
+        var settings = CurrentApp.Settings.Settings;
+        if (settings.SnapEnabled)
         {
+            // Snap against the monitor the paddock is being dragged onto.
+            var bounds = ScreenHelper.GetWorkAreaFor(targetX, targetY, ViewModel.Width, ViewModel.DisplayHeight);
             var snapped = ViewModel.SnapPosition(
-                newX, newY,
-                app.LayoutEngine,
-                app.PaddockManager.GetPaddocks(),
-                canvas.ActualWidth,
-                canvas.ActualHeight,
-                app.Settings.Settings.IntelligentSpacing);
-            newX = snapped.X;
-            newY = snapped.Y;
+                targetX,
+                targetY,
+                CurrentApp.LayoutEngine,
+                CurrentApp.PaddockManager.GetPaddocks(),
+                bounds,
+                settings.IntelligentSpacing);
+
+            targetX = snapped.X;
+            targetY = snapped.Y;
         }
 
-        Canvas.SetLeft(this, newX);
-        Canvas.SetTop(this, newY);
+        window.Left = targetX;
+        window.Top = targetY;
     }
 
-    protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
+    private void TitleBar_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        base.OnMouseLeftButtonUp(e);
+        if (_isDraggingWindow)
+            EndWindowDrag();
+    }
 
-        if (IsMouseCaptured)
-        {
-            ReleaseMouseCapture();
+    private void EndWindowDrag()
+    {
+        _isDraggingWindow = false;
+        TitleArea.ReleaseMouseCapture();
 
-            // Only save position if the user actually dragged
-            if (_isDragging)
-            {
-                var x = Canvas.GetLeft(this);
-                var y = Canvas.GetTop(this);
-                ViewModel.UpdatePosition(x, y);
-            }
+        var window = HostWindow;
+        if (window is not null)
+            ViewModel.UpdatePosition(window.Left, window.Top);
+    }
 
-            _isDragging = false;
-        }
+    // --- Resizing ---
+
+    private void ResizeGrip_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        if (ViewModel.IsLocked)
+            return;
+
+        var window = HostWindow;
+        if (window is null)
+            return;
+
+        var bounds = ScreenHelper.GetWorkAreaFor(window.Left, window.Top, window.Width, window.Height);
+
+        var maxWidth = Math.Max(window.MinWidth, bounds.Right - window.Left);
+        var maxHeight = Math.Max(window.MinHeight, bounds.Bottom - window.Top);
+
+        window.Width = Math.Clamp(window.Width + e.HorizontalChange, window.MinWidth, maxWidth);
+        window.Height = Math.Clamp(window.Height + e.VerticalChange, window.MinHeight, maxHeight);
+    }
+
+    private void ResizeGrip_DragCompleted(object sender, DragCompletedEventArgs e)
+    {
+        if (ViewModel.IsLocked)
+            return;
+
+        var window = HostWindow;
+        if (window is not null)
+            ViewModel.UpdateSize(window.Width, window.Height);
     }
 
     // --- Rename ---
@@ -203,50 +243,53 @@ public partial class PaddockControl : UserControl
         e.Handled = true;
     }
 
-    // --- Resize ---
+    // --- Dropping items in ---
 
-    private void ResizeGrip_DragDelta(object sender, DragDeltaEventArgs e)
+    private void Paddock_DragOver(object sender, DragEventArgs e)
     {
-        if (ViewModel.IsLocked)
-            return;
-
-        var newWidth = ActualWidth + e.HorizontalChange;
-        var newHeight = ActualHeight + e.VerticalChange;
-
-        if (newWidth >= MinWidth)
-            Width = newWidth;
-        if (newHeight >= MinHeight)
-            Height = newHeight;
-    }
-
-    private void ResizeGrip_DragCompleted(object sender, DragCompletedEventArgs e)
-    {
-        if (ViewModel.IsLocked)
-            return;
-
-        ViewModel.UpdateSize(Width, Height);
-    }
-
-    // --- Icon drag & drop ---
-
-    private void IconArea_Drop(object sender, DragEventArgs e)
-    {
-        ViewModel.HandleIconDrop(e);
-    }
-
-    private void IconArea_DragOver(object sender, DragEventArgs e)
-    {
-        e.Effects = DragDropEffects.Move;
+        e.Effects = CanAccept(e) ? DragDropEffects.Move : DragDropEffects.None;
         e.Handled = true;
     }
+
+    private void Paddock_DragEnter(object sender, DragEventArgs e)
+    {
+        if (CanAccept(e))
+            DropHighlight.Visibility = Visibility.Visible;
+    }
+
+    private void Paddock_DragLeave(object sender, DragEventArgs e)
+        => DropHighlight.Visibility = Visibility.Collapsed;
+
+    private static bool CanAccept(DragEventArgs e)
+        => e.Data.GetDataPresent(typeof(IconDragData))
+           || e.Data.GetDataPresent(DataFormats.FileDrop);
+
+    private void Paddock_Drop(object sender, DragEventArgs e)
+    {
+        DropHighlight.Visibility = Visibility.Collapsed;
+
+        var sourcePaddockId = ViewModel.HandleDrop(e);
+
+        if (sourcePaddockId is not null)
+            CurrentApp.Host?.RefreshPaddock(sourcePaddockId);
+
+        CurrentApp.DesktopIconService.NotifyShellOfDesktopChange();
+
+        // We moved the files ourselves, so tell the drag source there is nothing
+        // left for it to clean up. Reporting Move here would invite Explorer to
+        // delete a source path we have already emptied.
+        e.Effects = DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    // --- Icons ---
 
     private void Icon_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (sender is not FrameworkElement element)
             return;
 
-        // Double-click launches the icon. StackPanel has no MouseDoubleClick event,
-        // so we detect it via ClickCount on the regular mouse-down event.
+        // StackPanel has no MouseDoubleClick event, so detect it via ClickCount.
         if (e.ClickCount == 2 && element.DataContext is IconViewModel icon)
         {
             icon.Launch();
@@ -259,17 +302,6 @@ public partial class PaddockControl : UserControl
         _iconDragStarted = false;
     }
 
-    private void Icon_RightClick(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is FrameworkElement { DataContext: IconViewModel icon })
-        {
-            var helper = new WindowInteropHelper(Window.GetWindow(this));
-            var screenPoint = PointToScreen(e.GetPosition(this));
-            ShellContextMenu.Show(icon.FullPath, helper.Handle, (int)screenPoint.X, (int)screenPoint.Y);
-            e.Handled = true;
-        }
-    }
-
     private void Icon_MouseMove(object sender, MouseEventArgs e)
     {
         if (e.LeftButton != MouseButtonState.Pressed)
@@ -278,30 +310,70 @@ public partial class PaddockControl : UserControl
             return;
         }
 
+        if (_iconDragStarted)
+            return;
+
         if (sender is not FrameworkElement element || element.DataContext is not IconViewModel icon)
             return;
 
-        // Require minimum mouse movement before starting a drag,
-        // so that double-click to launch still works reliably.
-        var currentPos = e.GetPosition(element);
-        var delta = currentPos - _iconDragStart;
+        // Require a little movement first, so double-click-to-launch still works.
+        var delta = e.GetPosition(element) - _iconDragStart;
         if (Math.Abs(delta.X) < MinDragDistance && Math.Abs(delta.Y) < MinDragDistance)
-            return;
-
-        if (_iconDragStarted)
             return;
 
         _iconDragStarted = true;
 
-        var dragData = new IconDragData
+        var data = new DataObject();
+        data.SetData(typeof(IconDragData), new IconDragData
         {
             SourcePaddockId = ViewModel.Id,
             DesktopPath = icon.FullPath
-        };
-        DragDrop.DoDragDrop(element, dragData, DragDropEffects.Move);
+        });
+
+        // Also offer the plain file, so the item can be dropped into Explorer
+        // or any other application that accepts files.
+        data.SetData(DataFormats.FileDrop, new[] { icon.FullPath });
+
+        DragDrop.DoDragDrop(element, data, DragDropEffects.Move | DragDropEffects.Copy);
+
+        _iconDragStarted = false;
+        HandleIconDragFinished(icon);
     }
 
-    // --- Context menu handlers ---
+    /// <summary>
+    /// After a drag ends: if the item was not dropped on a paddock, it belongs
+    /// back on the desktop. That also cleans up the entry when another
+    /// application (Explorer, say) moved the file itself.
+    /// </summary>
+    private void HandleIconDragFinished(IconViewModel icon)
+    {
+        var droppedOnPaddock = CurrentApp.Host?.FindWindowAt(ScreenHelper.GetCursorPosition()) is not null;
+        if (droppedOnPaddock)
+            return;
+
+        ViewModel.EjectIcon(icon.FullPath);
+        CurrentApp.DesktopIconService.NotifyShellOfDesktopChange();
+    }
+
+    private void Icon_RightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: IconViewModel icon } element)
+            return;
+
+        // Handled here so the paddock's own context menu does not also open.
+        e.Handled = true;
+
+        var window = Window.GetWindow(this);
+        var handle = window is null ? IntPtr.Zero : new WindowInteropHelper(window).Handle;
+        var screenPoint = element.PointToScreen(e.GetPosition(element));
+
+        ShellContextMenu.Show(icon.FullPath, handle, (int)screenPoint.X, (int)screenPoint.Y);
+
+        // The menu may have deleted or renamed the item.
+        CurrentApp.Host?.RefreshFromDisk();
+    }
+
+    // --- Context menu ---
 
     private void ContextMenu_Rename(object sender, RoutedEventArgs e)
     {
@@ -313,31 +385,69 @@ public partial class PaddockControl : UserControl
         ViewModel.Remove();
     }
 
-    private void TitleVisibility_Always(object sender, RoutedEventArgs e)
+    private void ContextMenu_ToggleRollUp(object sender, RoutedEventArgs e)
     {
-        ViewModel.TitleVisibility = TitleVisibility.Always;
-        UpdateTitleVisibility(TitleVisibility.Always);
+        ViewModel.ToggleRollUp();
     }
+
+    /// <summary>
+    /// Moves a whole category of desktop items into this paddock. The category
+    /// comes from the menu item's Tag, and the count is always confirmed first —
+    /// this moves real files.
+    /// </summary>
+    private void ContextMenu_FillFromDesktop(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: string tag }
+            || !Enum.TryParse<DesktopItemCategory>(tag, out var category))
+        {
+            return;
+        }
+
+        var items = DesktopItemFilter.Filter(CurrentApp.DesktopIconService.GetDesktopItems(), category);
+        var description = DesktopItemFilter.Describe(category);
+
+        if (items.Count == 0)
+        {
+            MessageBox.Show(
+                $"There are no {description} on the desktop to collect.",
+                "Paddock",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        var answer = MessageBox.Show(
+            $"Move {items.Count} {description} into \"{ViewModel.Title}\"?\n\n" +
+            "They will be moved off the desktop into this paddock's folder, and " +
+            "go back to the desktop if you drag them out or remove the paddock.",
+            "Paddock",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Question);
+
+        if (answer != MessageBoxResult.OK)
+            return;
+
+        ViewModel.AddIcons(items);
+        CurrentApp.DesktopIconService.NotifyShellOfDesktopChange();
+    }
+
+    private void TitleVisibility_Always(object sender, RoutedEventArgs e)
+        => ViewModel.TitleVisibility = TitleVisibility.Always;
 
     private void TitleVisibility_Hover(object sender, RoutedEventArgs e)
-    {
-        ViewModel.TitleVisibility = TitleVisibility.Hover;
-        UpdateTitleVisibility(TitleVisibility.Hover);
-    }
+        => ViewModel.TitleVisibility = TitleVisibility.Hover;
 
     private void TitleVisibility_Hidden(object sender, RoutedEventArgs e)
-    {
-        ViewModel.TitleVisibility = TitleVisibility.Hidden;
-        UpdateTitleVisibility(TitleVisibility.Hidden);
-    }
+        => ViewModel.TitleVisibility = TitleVisibility.Hidden;
 
     private void Sort_Name(object sender, RoutedEventArgs e) => ViewModel.SortBy = SortField.Name;
+
     private void Sort_Date(object sender, RoutedEventArgs e) => ViewModel.SortBy = SortField.DateModified;
+
     private void Sort_Type(object sender, RoutedEventArgs e) => ViewModel.SortBy = SortField.FileType;
+
     private void Sort_Size(object sender, RoutedEventArgs e) => ViewModel.SortBy = SortField.FileSize;
 
     private void Sort_ToggleDirection(object sender, RoutedEventArgs e)
-    {
-        ViewModel.SortAscending = !ViewModel.SortAscending;
-    }
+        => ViewModel.SortAscending = !ViewModel.SortAscending;
 }

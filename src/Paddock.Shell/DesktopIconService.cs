@@ -1,159 +1,209 @@
-using System.Diagnostics;
 using System.IO;
+using Paddock.Core.Services;
 
 namespace Paddock.Shell;
 
 /// <summary>
-/// Reads and manipulates desktop icon positions via the Windows Shell.
+/// Knows where the desktop lives and where paddocks keep their items.
+///
+/// Paddock stores the items it holds in a hidden folder on the desktop itself
+/// (<c>%USERPROFILE%\Desktop\.Paddock\&lt;paddock-id&gt;</c>). Moving a file in
+/// there is what makes its icon leave the desktop, because the shell only draws
+/// the top-level entries of the Desktop folder. Keeping the folder on the
+/// desktop — rather than off in AppData — means the user's files never travel
+/// far, and stay recoverable even without the app.
 /// </summary>
-public class DesktopIconService
+public sealed class DesktopIconService : IDisposable
 {
-    /// <summary>
-    /// Gets the paths of all icons currently on the desktop.
-    /// </summary>
-    public List<string> GetDesktopIconPaths()
+    /// <summary>Name of the hidden folder holding one subfolder per paddock.</summary>
+    public const string StoreFolderName = ".Paddock";
+
+    private static readonly string[] IgnoredNames = ["desktop.ini", "thumbs.db"];
+
+    private FileSystemWatcher? _watcher;
+    private System.Timers.Timer? _debounce;
+    private Action? _onStoreChanged;
+
+    public DesktopIconService()
     {
-        var desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-        var commonDesktop = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
+        DesktopRoot = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        CommonDesktopRoot = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
+        StoreRoot = Path.Combine(DesktopRoot, StoreFolderName);
+    }
 
-        var icons = new List<string>();
+    /// <summary>The current user's Desktop folder.</summary>
+    public string DesktopRoot { get; }
 
-        if (Directory.Exists(desktopPath))
-            icons.AddRange(Directory.GetFiles(desktopPath));
+    /// <summary>The all-users Desktop folder (read-only for our purposes).</summary>
+    public string CommonDesktopRoot { get; }
 
-        if (Directory.Exists(commonDesktop))
-            icons.AddRange(Directory.GetFiles(commonDesktop));
+    /// <summary>Parent of the per-paddock folders.</summary>
+    public string StoreRoot { get; }
 
-        return icons;
+    /// <summary>
+    /// Creates the store folder (hidden, so it does not itself appear as a
+    /// desktop icon) and returns a store bound to it.
+    /// </summary>
+    public IconStore CreateIconStore()
+    {
+        EnsureHiddenStoreRoot();
+        return new IconStore(DesktopRoot, StoreRoot);
     }
 
     /// <summary>
-    /// Hides a desktop icon by moving it off-screen.
-    /// Used when an icon is placed inside a paddock.
+    /// Movable top-level items on the desktop — files and folders, minus shell
+    /// bookkeeping files and Paddock's own store folder.
+    ///
+    /// Items on the all-users desktop are deliberately left out: moving them
+    /// would change what every account on the machine sees (and usually needs
+    /// admin rights), so they stay where they are. They can still be dragged
+    /// into a paddock by hand, where they are referenced rather than moved.
     /// </summary>
-    public void HideDesktopIcon(string path)
+    public IReadOnlyList<string> GetDesktopItems()
     {
-        SetDesktopIconPosition(path, -10000, -10000);
-    }
+        var items = new List<string>();
 
-    /// <summary>
-    /// Restores a desktop icon to a visible position.
-    /// Used when an icon is removed from a paddock.
-    /// </summary>
-    public void ShowDesktopIcon(string path, int x, int y)
-    {
-        SetDesktopIconPosition(path, x, y);
-    }
+        if (!Directory.Exists(DesktopRoot))
+            return items;
 
-    /// <summary>
-    /// Starts watching for new icons appearing on the desktop.
-    /// </summary>
-    public FileSystemWatcher? WatchDesktopChanges(Action<string> onNewIcon, Action<string> onDeletedIcon)
-    {
-        var desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-        if (!Directory.Exists(desktopPath))
-            return null;
-
-        var watcher = new FileSystemWatcher(desktopPath)
-        {
-            NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName,
-            EnableRaisingEvents = true
-        };
-
-        watcher.Created += (_, e) => onNewIcon(e.FullPath);
-        watcher.Deleted += (_, e) => onDeletedIcon(e.FullPath);
-
-        return watcher;
-    }
-
-    /// <summary>
-    /// Finds the SysListView32 (desktop icon ListView) handle.
-    /// The desktop icon list is a child of SHELLDLL_DefView inside Progman or a WorkerW.
-    /// </summary>
-    private static IntPtr GetDesktopListView()
-    {
-        // First try: Progman > SHELLDLL_DefView > SysListView32
-        var progman = NativeMethods.FindWindowW("Progman", null);
-        if (progman != IntPtr.Zero)
-        {
-            var shellView = NativeMethods.FindWindowExW(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
-            if (shellView != IntPtr.Zero)
-            {
-                var listView = NativeMethods.FindWindowExW(shellView, IntPtr.Zero, "SysListView32", null);
-                if (listView != IntPtr.Zero)
-                    return listView;
-            }
-        }
-
-        // Fallback: SHELLDLL_DefView might be under a WorkerW window
-        IntPtr result = IntPtr.Zero;
-        NativeMethods.EnumWindows((hWnd, _) =>
-        {
-            var shellView = NativeMethods.FindWindowExW(hWnd, IntPtr.Zero, "SHELLDLL_DefView", null);
-            if (shellView != IntPtr.Zero)
-            {
-                result = NativeMethods.FindWindowExW(shellView, IntPtr.Zero, "SysListView32", null);
-                if (result != IntPtr.Zero)
-                    return false; // stop enumerating
-            }
-            return true;
-        }, IntPtr.Zero);
-
-        return result;
-    }
-
-    /// <summary>
-    /// Moves a desktop icon to the given position using LVM_SETITEMPOSITION.
-    /// The icon is identified by matching its filename in the desktop ListView.
-    /// </summary>
-    private static void SetDesktopIconPosition(string path, int x, int y)
-    {
         try
         {
-            var listView = GetDesktopListView();
-            if (listView == IntPtr.Zero)
+            foreach (var entry in Directory.EnumerateFileSystemEntries(DesktopRoot))
             {
-                Debug.WriteLine("DesktopIconService: Could not find desktop ListView.");
-                return;
+                if (IsHiddenOrIgnored(entry))
+                    continue;
+
+                items.Add(entry);
             }
-
-            // LVM_SETITEMPOSITION sends MAKELPARAM(x, y) as lParam
-            // and the item index as wParam. We need to find the index
-            // for the given path. However, reading item text from another
-            // process's ListView requires cross-process memory (VirtualAllocEx).
-            //
-            // For the MVP, we use a simpler approach: the item index matches
-            // the order returned by GetDesktopIconPaths (which lists files
-            // in the same order the shell enumerates them).
-            var fileName = Path.GetFileName(path);
-            var desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            var commonDesktop = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
-
-            // Build a list matching the desktop icon order
-            var allFiles = new List<string>();
-            if (Directory.Exists(desktopPath))
-                allFiles.AddRange(Directory.GetFiles(desktopPath));
-            if (Directory.Exists(commonDesktop))
-                allFiles.AddRange(Directory.GetFiles(commonDesktop));
-
-            var index = allFiles.FindIndex(f =>
-                string.Equals(Path.GetFileName(f), fileName, StringComparison.OrdinalIgnoreCase));
-
-            if (index < 0)
-            {
-                Debug.WriteLine($"DesktopIconService: Icon not found on desktop: {fileName}");
-                return;
-            }
-
-            NativeMethods.SendMessageW(
-                listView,
-                NativeMethods.LVM_SETITEMPOSITION,
-                (IntPtr)index,
-                NativeMethods.MakeLParam(x, y));
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"DesktopIconService: SetDesktopIconPosition failed: {ex.Message}");
+            Log.Warn($"Cannot list the desktop folder '{DesktopRoot}': {ex.Message}");
+        }
+
+        return items;
+    }
+
+    /// <summary>
+    /// Watches the store for changes made outside the app (files dropped into a
+    /// paddock folder from Explorer, items deleted, and so on). The callback is
+    /// debounced and raised on a background thread — marshal to the UI yourself.
+    /// </summary>
+    public void WatchStore(Action onChanged)
+    {
+        _onStoreChanged = onChanged;
+
+        try
+        {
+            EnsureHiddenStoreRoot();
+
+            _debounce = new System.Timers.Timer(400) { AutoReset = false };
+            _debounce.Elapsed += (_, _) => _onStoreChanged?.Invoke();
+
+            _watcher = new FileSystemWatcher(StoreRoot)
+            {
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName,
+                EnableRaisingEvents = true
+            };
+
+            _watcher.Created += OnStoreEvent;
+            _watcher.Deleted += OnStoreEvent;
+            _watcher.Renamed += OnStoreEvent;
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Cannot watch '{StoreRoot}' for changes.", ex);
+        }
+    }
+
+    /// <summary>
+    /// Tells the shell a folder's contents changed, so the desktop redraws
+    /// promptly after items are moved in or out.
+    /// </summary>
+    public void NotifyShellOfDesktopChange()
+    {
+        var pathPtr = IntPtr.Zero;
+        try
+        {
+            pathPtr = System.Runtime.InteropServices.Marshal.StringToHGlobalUni(DesktopRoot);
+            NativeMethods.SHChangeNotify(
+                NativeMethods.SHCNE_UPDATEDIR,
+                NativeMethods.SHCNF_PATHW,
+                pathPtr,
+                IntPtr.Zero);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"SHChangeNotify failed: {ex.Message}");
+        }
+        finally
+        {
+            if (pathPtr != IntPtr.Zero)
+                System.Runtime.InteropServices.Marshal.FreeHGlobal(pathPtr);
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_watcher is not null)
+        {
+            _watcher.EnableRaisingEvents = false;
+            _watcher.Created -= OnStoreEvent;
+            _watcher.Deleted -= OnStoreEvent;
+            _watcher.Renamed -= OnStoreEvent;
+            _watcher.Dispose();
+            _watcher = null;
+        }
+
+        _debounce?.Dispose();
+        _debounce = null;
+        _onStoreChanged = null;
+    }
+
+    private void OnStoreEvent(object sender, FileSystemEventArgs e)
+    {
+        // Collapse bursts of events (a multi-file move) into one refresh.
+        if (_debounce is null)
+            return;
+
+        _debounce.Stop();
+        _debounce.Start();
+    }
+
+    private void EnsureHiddenStoreRoot()
+    {
+        try
+        {
+            var info = Directory.CreateDirectory(StoreRoot);
+            if (!info.Attributes.HasFlag(FileAttributes.Hidden))
+                info.Attributes |= FileAttributes.Hidden;
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Cannot prepare the paddock store at '{StoreRoot}'.", ex);
+        }
+    }
+
+    private bool IsHiddenOrIgnored(string path)
+    {
+        var name = Path.GetFileName(path);
+
+        if (IgnoredNames.Contains(name, StringComparer.OrdinalIgnoreCase))
+            return true;
+
+        if (string.Equals(name, StoreFolderName, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        try
+        {
+            var attributes = File.GetAttributes(path);
+            return attributes.HasFlag(FileAttributes.Hidden) || attributes.HasFlag(FileAttributes.System);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Cannot read attributes of '{path}': {ex.Message}");
+            return true;
         }
     }
 }

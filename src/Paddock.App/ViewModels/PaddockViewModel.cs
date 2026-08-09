@@ -10,11 +10,19 @@ namespace Paddock.App.ViewModels;
 
 public class PaddockViewModel : INotifyPropertyChanged
 {
+    /// <summary>Height of the title strip, and of a rolled-up paddock.</summary>
+    public const double TitleBarHeight = 32;
+
+    private static readonly Color FallbackBackground = Color.FromRgb(0x1C, 0x1C, 0x1E);
+
     private readonly PaddockModel _model;
     private readonly PaddockManager _manager;
-    private Point _dragStartOffset;
     private bool _isRenaming;
-    private string _renameText = string.Empty;
+    private string _renameText;
+
+    // Frozen brushes, rebuilt only when the style changes.
+    private Brush? _backgroundBrush;
+    private Brush? _borderBrush;
 
     public event Action? RemoveRequested;
 
@@ -29,6 +37,19 @@ public class PaddockViewModel : INotifyPropertyChanged
 
     // --- Identity ---
     public string Id => _model.Id;
+
+    // --- Geometry (screen coordinates, device-independent pixels) ---
+
+    public double X => _model.X;
+
+    public double Y => _model.Y;
+
+    public double Width => _model.Width;
+
+    public double Height => _model.Height;
+
+    /// <summary>Height the window should actually take, honouring roll-up.</summary>
+    public double DisplayHeight => IsRolledUp ? TitleBarHeight : _model.Height;
 
     // --- Title ---
     public string Title
@@ -100,13 +121,13 @@ public class PaddockViewModel : INotifyPropertyChanged
             _model.IsRolledUp = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(ContentVisibility));
-            OnPropertyChanged(nameof(RolledUpHeight));
+            OnPropertyChanged(nameof(DisplayHeight));
+            OnPropertyChanged(nameof(EmptyHintVisibility));
             _manager.SaveLayout();
         }
     }
 
     public Visibility ContentVisibility => IsRolledUp ? Visibility.Collapsed : Visibility.Visible;
-    public double RolledUpHeight => IsRolledUp ? 32 : _model.Height;
 
     public bool ExcludeFromQuickHide
     {
@@ -143,18 +164,19 @@ public class PaddockViewModel : INotifyPropertyChanged
     }
 
     // --- Styling ---
-    public double Opacity => _model.Style.Opacity;
+
+    /// <summary>
+    /// Background including the configured transparency. The alpha lives in the
+    /// brush rather than on the element's Opacity so that icons and labels stay
+    /// fully opaque on top of a see-through panel.
+    /// </summary>
+    public Brush BackgroundBrush => _backgroundBrush ??= BuildBackgroundBrush();
+
+    public Brush BorderBrush => _borderBrush ??= BuildBorderBrush();
+
+    public Thickness BorderThickness => new(_model.Style.BorderThickness);
 
     public CornerRadius CornerRadius => new(_model.Style.CornerRadius);
-
-    public Brush BackgroundBrush
-    {
-        get
-        {
-            var color = (Color)ColorConverter.ConvertFromString(_model.Style.BackgroundColor);
-            return new SolidColorBrush(color);
-        }
-    }
 
     public string BackgroundColor
     {
@@ -162,6 +184,7 @@ public class PaddockViewModel : INotifyPropertyChanged
         set
         {
             _model.Style.BackgroundColor = value;
+            InvalidateBrushes();
             OnPropertyChanged();
             OnPropertyChanged(nameof(BackgroundBrush));
             _manager.SaveLayout();
@@ -174,8 +197,9 @@ public class PaddockViewModel : INotifyPropertyChanged
         set
         {
             _model.Style.Opacity = value;
+            InvalidateBrushes();
             OnPropertyChanged();
-            OnPropertyChanged(nameof(Opacity));
+            OnPropertyChanged(nameof(BackgroundBrush));
             _manager.SaveLayout();
         }
     }
@@ -195,59 +219,206 @@ public class PaddockViewModel : INotifyPropertyChanged
     // --- Icons ---
     public ObservableCollection<IconViewModel> Icons { get; } = new();
 
+    /// <summary>Shows the "drag icons here" hint while a paddock is empty.</summary>
+    public Visibility EmptyHintVisibility => !IsRolledUp && Icons.Count == 0
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+
     public void RefreshIcons()
     {
-        Icons.Clear();
-        var sorted = PaddockManager.GetSortedIcons(_model);
-        foreach (var entry in sorted)
+        var desired = PaddockManager.GetSortedIcons(_model);
+
+        if (MatchesCurrentIcons(desired))
+            return;
+
+        ReconcileIcons(desired);
+
+        OnPropertyChanged(nameof(EmptyHintVisibility));
+    }
+
+    /// <summary>
+    /// Brings the icon list in line with <paramref name="desired"/> using the
+    /// fewest possible collection changes: existing view models are kept (so
+    /// their icons, cached or still loading, survive), and dropping one file into
+    /// a full paddock costs a single insert rather than a full rebuild.
+    /// </summary>
+    private void ReconcileIcons(List<IconEntry> desired)
+    {
+        var wanted = new HashSet<string>(
+            desired.Select(entry => entry.DesktopPath),
+            StringComparer.OrdinalIgnoreCase);
+
+        for (var i = Icons.Count - 1; i >= 0; i--)
         {
-            Icons.Add(new IconViewModel(entry));
+            if (!wanted.Contains(Icons[i].FullPath))
+                Icons.RemoveAt(i);
+        }
+
+        for (var index = 0; index < desired.Count; index++)
+        {
+            var path = desired[index].DesktopPath;
+
+            if (index < Icons.Count && PathEquals(Icons[index].FullPath, path))
+                continue;
+
+            var existing = IndexOfIcon(path, index);
+
+            if (existing >= 0)
+                Icons.Move(existing, index);
+            else
+                Icons.Insert(index, new IconViewModel(desired[index]));
+        }
+
+        while (Icons.Count > desired.Count)
+        {
+            Icons.RemoveAt(Icons.Count - 1);
         }
     }
 
-    // --- Actions ---
-    public void BeginDrag(Point mouseOffset)
+    private int IndexOfIcon(string path, int startAt)
     {
-        _dragStartOffset = mouseOffset;
+        for (var i = startAt; i < Icons.Count; i++)
+        {
+            if (PathEquals(Icons[i].FullPath, path))
+                return i;
+        }
+
+        return -1;
     }
 
-    public Point DragStartOffset => _dragStartOffset;
+    private static bool PathEquals(string a, string b)
+        => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
-    public void UpdateSize(double width, double height)
+    /// <summary>
+    /// True when the grid already shows exactly these items in this order. The
+    /// store watcher fires for Paddock's own moves too, so "nothing changed" is
+    /// the common case and should cost nothing.
+    /// </summary>
+    private bool MatchesCurrentIcons(List<IconEntry> desired)
     {
-        _model.Width = width;
-        _model.Height = height;
-        _manager.SaveLayout();
+        if (desired.Count != Icons.Count)
+            return false;
+
+        for (var i = 0; i < desired.Count; i++)
+        {
+            if (!PathEquals(desired[i].DesktopPath, Icons[i].FullPath))
+                return false;
+        }
+
+        return true;
     }
+
+    /// <summary>
+    /// Takes the files described by a drop and puts them in this paddock,
+    /// moving desktop items off the desktop. Returns the id of the paddock the
+    /// items came from, when they came from another paddock.
+    /// </summary>
+    public string? HandleDrop(DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(typeof(IconDragData)))
+        {
+            if (e.Data.GetData(typeof(IconDragData)) is not IconDragData data || data.SourcePaddockId == Id)
+                return null;
+
+            _manager.MoveIconBetweenPaddocks(data.SourcePaddockId, Id, data.DesktopPath);
+            RefreshIcons();
+            return data.SourcePaddockId;
+        }
+
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            if (e.Data.GetData(DataFormats.FileDrop) is not string[] files)
+                return null;
+
+            foreach (var file in files)
+            {
+                _manager.AddIconToPaddock(Id, file);
+            }
+
+            RefreshIcons();
+        }
+
+        return null;
+    }
+
+    /// <summary>Adds a single item, moving it off the desktop.</summary>
+    public void AddIcon(string path)
+    {
+        _manager.AddIconToPaddock(Id, path);
+        RefreshIcons();
+    }
+
+    /// <summary>
+    /// Adds several items in one pass: one settings write and one grid refresh
+    /// for the whole batch, however many items there are.
+    /// </summary>
+    public void AddIcons(IEnumerable<string> paths)
+    {
+        using (_manager.DeferSave())
+        {
+            foreach (var path in paths)
+            {
+                _manager.AddIconToPaddock(Id, path);
+            }
+        }
+
+        RefreshIcons();
+    }
+
+    /// <summary>Puts an item back on the desktop and drops it from this paddock.</summary>
+    public void EjectIcon(string path)
+    {
+        _manager.EjectIcon(Id, path);
+        RefreshIcons();
+    }
+
+    // --- Geometry updates ---
 
     public void UpdatePosition(double x, double y)
     {
         _model.X = x;
         _model.Y = y;
+        OnPropertyChanged(nameof(X));
+        OnPropertyChanged(nameof(Y));
         _manager.SaveLayout();
     }
 
+    public void UpdateSize(double width, double height)
+    {
+        _model.Width = width;
+        _model.Height = height;
+        OnPropertyChanged(nameof(Width));
+        OnPropertyChanged(nameof(Height));
+        OnPropertyChanged(nameof(DisplayHeight));
+        _manager.SaveLayout();
+    }
+
+    /// <summary>
+    /// Applies snapping to a candidate position without committing it, so the
+    /// window can follow the cursor while snapping to edges and neighbours.
+    /// </summary>
     public (double X, double Y) SnapPosition(
         double x, double y,
         LayoutEngine layoutEngine,
         IReadOnlyList<PaddockModel> allPaddocks,
-        double screenWidth, double screenHeight,
+        LayoutBounds bounds,
         double spacingGap)
     {
-        // Temporarily set position so the engine can read it
-        var oldX = _model.X;
-        var oldY = _model.Y;
+        var originalX = _model.X;
+        var originalY = _model.Y;
+
         _model.X = x;
         _model.Y = y;
 
-        var result = layoutEngine.SnapToEdges(_model, allPaddocks, screenWidth, screenHeight, spacingGap);
+        var result = layoutEngine.SnapToEdges(_model, allPaddocks, bounds, spacingGap);
 
-        // Restore original position (caller will set it via UpdatePosition when drag ends)
-        _model.X = oldX;
-        _model.Y = oldY;
+        _model.X = originalX;
+        _model.Y = originalY;
 
         return result;
     }
+
+    // --- Commands ---
 
     public void BeginRenameTitle()
     {
@@ -258,9 +429,8 @@ public class PaddockViewModel : INotifyPropertyChanged
     public void CommitRename()
     {
         if (!string.IsNullOrWhiteSpace(RenameText))
-        {
             Title = RenameText.Trim();
-        }
+
         IsRenaming = false;
     }
 
@@ -275,33 +445,47 @@ public class PaddockViewModel : INotifyPropertyChanged
         IsRolledUp = !IsRolledUp;
     }
 
-    public void HandleIconDrop(DragEventArgs e)
-    {
-        // Handle drop from another paddock
-        if (e.Data.GetDataPresent(typeof(IconDragData)))
-        {
-            var data = (IconDragData)e.Data.GetData(typeof(IconDragData))!;
-            if (data.SourcePaddockId != Id)
-            {
-                _manager.MoveIconBetweenPaddocks(data.SourcePaddockId, Id, data.DesktopPath);
-                RefreshIcons();
-            }
-        }
-        // Handle drop from desktop (file paths)
-        else if (e.Data.GetDataPresent(DataFormats.FileDrop))
-        {
-            var files = (string[])e.Data.GetData(DataFormats.FileDrop)!;
-            foreach (var file in files)
-            {
-                _manager.AddIconToPaddock(Id, file);
-            }
-            RefreshIcons();
-        }
-    }
-
     public void Remove()
     {
         RemoveRequested?.Invoke();
+    }
+
+    private Brush BuildBackgroundBrush()
+    {
+        var colour = ParseColour(_model.Style.BackgroundColor, FallbackBackground);
+        var alpha = (byte)Math.Clamp(_model.Style.Opacity * 255, 0, 255);
+        var brush = new SolidColorBrush(Color.FromArgb(alpha, colour.R, colour.G, colour.B));
+        brush.Freeze();
+        return brush;
+    }
+
+    private Brush BuildBorderBrush()
+    {
+        var brush = new SolidColorBrush(ParseColour(_model.Style.BorderColor, Colors.Transparent));
+        brush.Freeze();
+        return brush;
+    }
+
+    /// <summary>Forces the cached brushes to be rebuilt on next use.</summary>
+    private void InvalidateBrushes()
+    {
+        _backgroundBrush = null;
+        _borderBrush = null;
+    }
+
+    private static Color ParseColour(string value, Color fallback)
+    {
+        try
+        {
+            if (ColorConverter.ConvertFromString(value) is Color colour)
+                return colour;
+        }
+        catch (FormatException)
+        {
+            // Fall through to the default below.
+        }
+
+        return fallback;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -311,7 +495,8 @@ public class PaddockViewModel : INotifyPropertyChanged
 }
 
 /// <summary>
-/// Data object for drag-drop between paddocks.
+/// Payload for dragging an icon out of a paddock — into another paddock, or out
+/// to the desktop.
 /// </summary>
 [Serializable]
 public class IconDragData

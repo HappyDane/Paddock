@@ -64,47 +64,50 @@ organize icons — bringing order to cluttered desktops with style.
 The minimum viable product that makes the app usable.
 
 #### P1.1 Desktop Integration
-- [ ] Embed a transparent WPF overlay window as a child of the desktop (`Progman` / `WorkerW`)
-- [ ] Intercept and forward mouse events to the desktop when not interacting with paddocks
-- [ ] Run on Windows startup (optional, configurable)
-- [ ] System tray icon with context menu (Settings, Exit, Show/Hide paddocks)
+- [x] Paddocks live at desktop level: above the wallpaper and icons, below every app window
+- [x] Empty desktop space is left untouched, so desktop mouse behaviour is unchanged
+- [x] Run on Windows startup (optional, configurable)
+- [x] System tray icon with context menu (New Paddock, Show/Hide, Restore icons, Settings, Exit)
 
 #### P1.2 Creating & Managing Paddocks
-- [ ] **Create**: Right-click desktop → "New Paddock" → draw a rectangle to define the zone
-- [ ] **Resize**: Drag edges/corners to resize
-- [ ] **Move**: Drag title area to reposition on canvas
-- [ ] **Delete**: Close button (hover-reveal) or right-click → "Remove Paddock"
-- [ ] **Rename**: Double-click title to show inline text editor
-- [ ] Each paddock has a title area and a scrollable icon grid
+- [x] **Create**: Tray → "New Paddock…" → drag a rectangle on the desktop (Esc cancels)
+- [x] **Resize**: Drag the bottom-right grip
+- [x] **Move**: Drag the title area, with snapping to monitor edges and neighbours
+- [x] **Delete**: Close button (hover-reveal) or right-click → "Remove Paddock"
+- [x] **Rename**: Right-click → Rename, inline text editor
+- [x] Each paddock has a title area and a scrollable icon grid
 
 #### P1.3 Icon Management
-- [ ] **Extract & display** actual file/shortcut icons via Shell32/SHGetFileInfo
-- [ ] Drag desktop icons into a paddock to organize them
-- [ ] Drag icons out of a paddock back to the desktop
-- [ ] Drag icons between paddocks
-- [ ] **Sort icons** within a paddock by: Name, Date Modified, File Type, File Size
-- [ ] Sort order persisted per paddock (ascending/descending)
-- [ ] Auto-arrange icons in grid layout after sort
-- [ ] **Pinned positions**: Icons don't scramble on paddock resize (reflow, don't shuffle)
-- [ ] Double-click an icon inside a paddock to launch it
-- [ ] Right-click icon shows the standard Windows shell context menu
+- [x] **Extract & display** actual file/shortcut icons via the shell's 48px image list
+- [x] Drag desktop icons into a paddock — the file moves, so the icon leaves the desktop
+- [x] Drag icons out of a paddock back to the desktop
+- [x] Drag icons between paddocks
+- [x] Bulk fill: right-click → "Collect Desktop Items"
+- [x] **Sort icons** within a paddock by: Name, Date Modified, File Type, File Size
+- [x] Sort order persisted per paddock (ascending/descending)
+- [x] Auto-arrange icons in grid layout after sort
+- [x] Double-click an icon inside a paddock to launch it
+- [x] Right-click icon shows the standard Windows shell context menu
+- [ ] Collect the icons that were sitting underneath a newly drawn paddock
+- [ ] Free icon placement inside a paddock (currently a reflowing grid)
 
 #### P1.4 Persistence
-- [ ] Save paddock positions, sizes, and contained icons to `settings.json`
-- [ ] Restore layout on application start
-- [ ] Handle desktop resolution changes gracefully (reflow/clamp paddocks)
+- [x] Save paddock positions, sizes, and contained icons to `settings.json`
+- [x] Restore layout on application start, reconciled against what is on disk
+- [x] Handle resolution / monitor changes gracefully (clamp paddocks per monitor)
 
 #### P1.5 Per-Paddock Styling
-- [ ] Configurable **background color** per paddock (color picker)
-- [ ] Configurable **opacity/transparency** per paddock (0-100% slider)
-- [ ] **Rounded corners** (configurable radius per paddock)
-- [ ] Light and dark default themes
-- [ ] New paddocks inherit `DefaultOpacity` and `DefaultCornerRadius` from settings
+- [x] Configurable **background color** per paddock
+- [x] Configurable **opacity/transparency** per paddock (applied to the panel, not its contents)
+- [x] **Rounded corners** (configurable radius per paddock)
+- [x] Light and dark default themes, switchable at runtime
+- [x] New paddocks inherit `DefaultOpacity` and `DefaultCornerRadius` from settings
+- [ ] Colour picker UI (values are settable in `settings.json` today)
 
 #### P1.6 Zone Titles
-- [ ] **Title visibility mode**: Always visible, Hover-only, Hidden — per paddock
-- [ ] Inline rename via double-click
-- [ ] Title font inherits from theme (clean, minimal)
+- [x] **Title visibility mode**: Always visible, Hover-only, Hidden — per paddock
+- [x] Inline rename
+- [x] Title font inherits from theme (clean, minimal)
 
 ---
 
@@ -124,10 +127,11 @@ The minimum viable product that makes the app usable.
 - [ ] Export/import corrals as `.paddock` files
 
 #### P2.3 Quick Hide
-- [ ] Double-click empty desktop to hide/show all paddocks
+- [x] Configurable global hotkey for toggle (`Ctrl+F12` by default), plus tray double-click
+- [x] **Per-paddock exclusion**: Mark specific paddocks as "always visible" (excluded from Quick Hide)
 - [ ] Fade animation on show/hide
-- [ ] Configurable hotkey for toggle
-- [ ] **Per-paddock exclusion**: Mark specific paddocks as "always visible" (excluded from Quick Hide)
+- ~~Double-click empty desktop to toggle~~ — not possible: Paddock keeps no overlay
+  over empty desktop space, so those clicks belong to the shell, not to us
 
 #### P2.4 Layout & Snapping
 - [ ] Snap paddocks to screen edges and to each other
@@ -200,6 +204,7 @@ The minimum viable product that makes the app usable.
           "titleVisibility": "hover",
           "x": 100,
           "y": 200,
+          "_comment": "x/y are screen coordinates in DIPs, relative to the primary monitor",
           "width": 400,
           "height": 300,
           "isRolledUp": false,
@@ -209,11 +214,14 @@ The minimum viable product that makes the app usable.
           "style": {
             "backgroundColor": "#1C1C1E",
             "opacity": 0.88,
-            "cornerRadius": 16
+            "cornerRadius": 16,
+            "borderColor": "#26FFFFFF",
+            "borderThickness": 1
           },
           "icons": [
             {
-              "desktopPath": "C:\\Users\\User\\Desktop\\MyProject.lnk",
+              "desktopPath": "C:\\Users\\User\\Desktop\\.Paddock\\a1b2c3\\MyProject.lnk",
+              "managed": true,
               "gridPosition": { "row": 0, "col": 0 }
             }
           ],
@@ -235,12 +243,16 @@ Paddock/
 ├── src/
 │   ├── Paddock.App/                   # WPF application (entry point)
 │   │   ├── App.xaml / App.xaml.cs
+│   │   ├── Services/
+│   │   │   └── PaddockHost.cs         # Owns the live paddock windows
 │   │   ├── Views/
-│   │   │   ├── DesktopOverlay.xaml    # Main transparent overlay window
-│   │   │   ├── PaddockControl.xaml    # Individual paddock user control
+│   │   │   ├── PaddockWindow.xaml     # One borderless window per paddock
+│   │   │   ├── PaddockControl.xaml    # The paddock's contents + interactions
+│   │   │   ├── DrawAreaWindow.xaml    # Transient scrim for drawing a new paddock
 │   │   │   └── SettingsWindow.xaml    # Settings dialog
+│   │   ├── Helpers/
+│   │   │   └── ScreenHelper.cs        # Monitor geometry / DIP conversions
 │   │   ├── ViewModels/
-│   │   │   ├── DesktopOverlayViewModel.cs
 │   │   │   ├── PaddockViewModel.cs
 │   │   │   ├── IconViewModel.cs
 │   │   │   └── SettingsViewModel.cs
@@ -259,14 +271,17 @@ Paddock/
 │   │   │   └── AutoSortRule.cs
 │   │   └── Services/
 │   │       ├── PaddockManager.cs      # CRUD + icon sorting
+│   │       ├── IconStore.cs           # Moves the files behind icons
 │   │       ├── LayoutEngine.cs        # Positioning, snapping, intelligent spacing
 │   │       ├── ProfileManager.cs      # Save/load/switch corrals
 │   │       └── SettingsService.cs     # Read/write settings.json
 │   │
 │   ├── Paddock.Shell/                 # Windows shell integration (class library)
-│   │   ├── DesktopIconService.cs      # Read/move/monitor desktop icons
+│   │   ├── DesktopIconService.cs      # Desktop paths, store folder, watcher
 │   │   ├── IconExtractor.cs           # Extract icons from files via Shell32
-│   │   ├── ShellHookService.cs        # Embed overlay in desktop shell
+│   │   ├── ShellHookService.cs        # Pins windows at desktop z-order level
+│   │   ├── ShellContextMenu.cs        # Native right-click menu for an item
+│   │   ├── HotkeyService.cs           # System-wide hotkeys
 │   │   ├── StartupManager.cs          # Manage run-on-startup
 │   │   └── NativeMethods.cs           # P/Invoke declarations
 │   │
@@ -291,17 +306,33 @@ Paddock/
 
 ## Key Technical Challenges
 
-### 1. Embedding on the Desktop
-Windows doesn't make it easy to draw on the desktop. The approach:
-- Find the `Progman` window → send `0x052C` message to spawn a `WorkerW`
-- Set the WPF overlay as a child of `WorkerW` using `SetParent`
-- The overlay must be transparent (`AllowsTransparency=true`, `WindowStyle=None`)
+### 1. Sitting on the Desktop
+The `SetParent`-into-`WorkerW` trick is a dead end for this app: a window living
+there is painted *behind* the desktop icons and never receives mouse input.
+
+What Paddock does instead — one borderless window per paddock, each:
+- kept a normal top-level window (so input, focus and drag-drop all work),
+- marked `WS_EX_TOOLWINDOW` (no Alt-Tab or taskbar entry), never `Topmost`,
+- pinned in the z-order directly above the window that hosts the desktop icons
+  (`Progman`, or the `WorkerW` holding `SHELLDLL_DefView` when the wallpaper is
+  animated), by rewriting `hwndInsertAfter` on `WM_WINDOWPOSCHANGING`.
+
+Windows can raise other applications above a paddock, but nothing can raise a
+paddock above them. A periodic re-pin recovers from Explorer restarts.
+
+Deliberately, there is **no** full-screen overlay: empty desktop space is the real
+desktop, so right-click, rubber-band selection and icon dragging keep working.
 
 ### 2. Desktop Icon Manipulation
-- Use `SHGetDesktopFolder` and `IShellFolder` COM interfaces to enumerate desktop items
-- Use `Shell32` to get icon positions via `LVM_GETITEMPOSITION`
-- Move icons by programmatically setting their position in the ListView
-- Monitor for new icons via `FileSystemWatcher` on the Desktop folder
+Reading and writing positions in Explorer's icon list view (`LVM_GETITEMPOSITION`
+and friends) requires cross-process memory and breaks under "Auto arrange".
+Paddock takes the deterministic route instead:
+- An icon leaves the desktop by **moving the file** into the paddock's folder
+  under `%USERPROFILE%\Desktop\.Paddock\<id>`, because the shell only draws the
+  top level of the Desktop folder.
+- Ejecting an item, or deleting a paddock, moves the file back to the desktop.
+- `FileSystemWatcher` on the store keeps paddocks in step with changes made in
+  Explorer; `SHChangeNotify` nudges the desktop to redraw after a move.
 
 ### 3. Icon Extraction
 - Use `SHGetFileInfo` with `SHGFI_ICON | SHGFI_LARGEICON` to extract icons
@@ -309,9 +340,10 @@ Windows doesn't make it easy to draw on the desktop. The approach:
 - Cache extracted icons to avoid repeated Shell32 calls
 
 ### 4. Click-Through Behavior
-- The overlay must be click-through on empty areas (pass events to desktop)
-- Only intercept clicks on paddock regions
-- Use `WS_EX_TRANSPARENT` on the overlay, but selectively handle hit-testing
+Solved by construction: each paddock is its own window, exactly the size of the
+paddock, so there is nothing to click through. No `WS_EX_TRANSPARENT`, no
+hit-test forwarding. The only full-screen window is the transient scrim shown
+while drawing a new paddock.
 
 ### 5. Performance
 - Desktop icon monitoring should use file system watchers, not polling

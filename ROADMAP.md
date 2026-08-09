@@ -4,34 +4,42 @@
 
 The foundation. Everything needed to replace a cluttered desktop with organized zones.
 
-### Done (scaffolded)
+### Done
 - [x] Project architecture (Paddock.App / Core / Shell)
-- [x] WPF overlay window with transparent background
 - [x] Paddock model with persistence (JSON settings)
-- [x] System tray integration
-- [x] Dark and Light themes (Apple-inspired)
-- [x] Icon extraction via Shell32 (SHGetFileInfo)
+- [x] System tray integration (new paddock, show/hide, restore icons, settings)
+- [x] Dark and Light themes (Apple-inspired), switchable at runtime
+- [x] Icon extraction via the shell's 48px system image list
 - [x] Layout engine with snapping and intelligent spacing
-
-### In Progress
-- [ ] Desktop shell embedding (WorkerW technique)
-- [ ] Paddock drag-to-move on canvas
-- [ ] Icon drag in/out/between paddocks
-- [ ] Sort icons by name, date, type, size
-- [ ] Zone title visibility toggle (always / hover / hidden)
-- [ ] Inline rename
-- [ ] Roll-up (collapse to title bar)
-- [ ] Per-paddock transparency and color
-- [ ] Quick Hide with per-zone exclusion
-- [ ] Layout snapshots (corrals) — save/restore/switch
-- [ ] Intelligent spacing between zones
-- [ ] Run-on-startup registry integration
+- [x] Desktop-level windows: above wallpaper and icons, below every app window
+- [x] One window per paddock, so empty desktop space still belongs to the shell
+- [x] Draw-to-create paddock (tray → New Paddock, drag a rectangle, Esc cancels)
+- [x] Paddock drag-to-move with per-monitor edge and neighbour snapping
+- [x] Resize from the bottom-right grip, clamped to the monitor
+- [x] Icons really leave the desktop: files move into the paddock's own folder
+- [x] Icon drag in / out / between paddocks, plus "Fill from Desktop" by category
+- [x] Restore-everything escape hatch (tray → Restore All Icons to Desktop)
+- [x] Reconciliation on startup and on external changes (FileSystemWatcher)
+- [x] Sort icons by name, date, type, size — persisted per paddock
+- [x] Zone title visibility toggle (always / hover / hidden) + inline rename
+- [x] Roll-up (collapse to title bar), persisted
+- [x] Per-paddock transparency and colour (panel only — labels stay crisp)
+- [x] Quick Hide via global hotkey and tray, with per-zone exclusion
+- [x] Shell context menu on right-click icon
+- [x] Resolution / monitor change handling (clamp per monitor)
+- [x] Run-on-startup registry integration
+- [x] Layout snapshots (corrals) — save/restore/switch/export/import
+- [x] Background icon loading, batched settings writes, cached monitor geometry
+- [x] Single-instance guard, crash logging to %AppData%/Paddock/paddock.log
+- [x] Corrupt settings.json is preserved rather than silently discarded
 
 ### TODO
-- [ ] Draw-to-create paddock (right-click drag rectangle)
-- [ ] Shell context menu on right-click icon
-- [ ] Click-through on empty overlay areas
-- [ ] Desktop resolution change handling
+- [ ] Collect the icons that were sitting underneath a newly drawn paddock
+- [ ] Multi-select inside a paddock (drag, launch and delete several at once)
+- [ ] Free icon placement inside a paddock (currently a reflowing grid)
+- [ ] Colour picker in the settings UI
+- [ ] Fade animation on quick hide, smooth roll-up animation
+- [ ] Corral management UI (currently model + service only)
 - [ ] MSI/MSIX installer
 
 ---

@@ -155,10 +155,12 @@ public class ProfileManager
         var settings = _settingsService.Settings;
         var name = imported.Name;
 
-        // Avoid overwriting an existing corral by appending a suffix
+        // Avoid overwriting an existing corral by appending a suffix. An empty
+        // corral (the pristine "default" of a fresh install) is filled in place
+        // instead of being treated as a conflict.
         var baseName = name;
         var counter = 1;
-        while (settings.Corrals.ContainsKey(name))
+        while (settings.Corrals.TryGetValue(name, out var conflict) && conflict.Paddocks.Count > 0)
         {
             name = $"{baseName}_{counter}";
             counter++;
