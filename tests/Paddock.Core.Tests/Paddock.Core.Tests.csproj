@@ -16,6 +16,11 @@
     <PackageReference Include="Moq" Version="4.20.70" />
   </ItemGroup>
 
+  <!-- ImplicitUsings does not cover xunit, so make its namespace global -->
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\Paddock.Core\Paddock.Core.csproj" />
   </ItemGroup>
