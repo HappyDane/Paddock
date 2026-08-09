@@ -29,7 +29,13 @@ public class SettingsViewModel : INotifyPropertyChanged
     public string GlobalTheme
     {
         get => _settings.Settings.GlobalTheme;
-        set { _settings.Settings.GlobalTheme = value; _settings.Save(); OnPropertyChanged(); }
+        set
+        {
+            _settings.Settings.GlobalTheme = value;
+            _settings.Save();
+            ((App)Application.Current).ApplyTheme(value);
+            OnPropertyChanged();
+        }
     }
 
     public bool QuickHideEnabled

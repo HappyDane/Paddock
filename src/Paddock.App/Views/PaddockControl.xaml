@@ -1,8 +1,9 @@
 <UserControl x:Class="Paddock.App.Views.PaddockControl"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:vm="clr-namespace:Paddock.App.ViewModels"
-             MinWidth="140" MinHeight="32"
+             AllowDrop="True"
+             Drop="Paddock_Drop"
+             DragOver="Paddock_DragOver"
              x:Name="Root">
 
     <UserControl.Resources>
@@ -17,9 +18,6 @@
                              Storyboard.TargetProperty="Opacity"
                              To="0" Duration="0:0:0.25" />
         </Storyboard>
-
-        <!-- Roll-up animation -->
-        <BooleanToVisibilityConverter x:Key="BoolToVis" />
     </UserControl.Resources>
 
     <UserControl.Triggers>
@@ -35,6 +33,7 @@
     <UserControl.ContextMenu>
         <ContextMenu>
             <MenuItem Header="Rename" Click="ContextMenu_Rename" />
+            <MenuItem Header="Collect Desktop Items" Click="ContextMenu_CollectDesktopItems" />
             <Separator />
             <MenuItem Header="Title Visibility">
                 <MenuItem Header="Always Visible" IsCheckable="True"
@@ -59,34 +58,91 @@
                           Click="Sort_ToggleDirection" />
             </MenuItem>
             <Separator />
+            <MenuItem Header="Roll Up / Expand" Click="ContextMenu_ToggleRollUp" />
             <MenuItem Header="Lock Position" IsCheckable="True"
                       IsChecked="{Binding IsLocked}" />
             <MenuItem Header="Exclude from Quick Hide" IsCheckable="True"
                       IsChecked="{Binding ExcludeFromQuickHide}" />
             <Separator />
-            <MenuItem Header="Remove Paddock" Click="ContextMenu_Remove" />
+            <MenuItem Header="Remove Paddock (icons return to desktop)"
+                      Click="ContextMenu_Remove" />
         </ContextMenu>
     </UserControl.ContextMenu>
 
-    <!-- Outer wrapper with soft shadow -->
     <Border CornerRadius="{Binding CornerRadius}"
             Background="{Binding BackgroundBrush}"
-            Opacity="{Binding Opacity}">
-        <Border.Effect>
-            <DropShadowEffect Color="#000000"
-                              BlurRadius="24"
-                              ShadowDepth="4"
-                              Opacity="0.18"
-                              Direction="270" />
-        </Border.Effect>
+            BorderBrush="{Binding BorderBrush}"
+            BorderThickness="{Binding BorderThickness}"
+            SnapsToDevicePixels="True">
 
         <Grid>
+            <!-- Icon grid (hidden when rolled up) -->
+            <ScrollViewer Margin="6,32,6,6"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Background="Transparent"
+                          Visibility="{Binding ContentVisibility}">
+                <ItemsControl ItemsSource="{Binding Icons}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Width="76" Height="84"
+                                        Margin="2"
+                                        Background="Transparent"
+                                        MouseLeftButtonDown="Icon_MouseLeftButtonDown"
+                                        MouseRightButtonUp="Icon_RightClick"
+                                        MouseMove="Icon_MouseMove"
+                                        Cursor="Hand"
+                                        ToolTip="{Binding DisplayName}">
+
+                                <Image Source="{Binding IconImage}"
+                                       Width="44" Height="44"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,8,0,4"
+                                       RenderOptions.BitmapScalingMode="HighQuality" />
+
+                                <TextBlock Text="{Binding DisplayName}"
+                                           Foreground="{DynamicResource PaddockIconText}"
+                                           FontFamily="Segoe UI Variable, Segoe UI"
+                                           FontSize="10.5"
+                                           FontWeight="Regular"
+                                           TextAlignment="Center"
+                                           TextWrapping="Wrap"
+                                           TextTrimming="CharacterEllipsis"
+                                           LineHeight="14"
+                                           MaxHeight="28" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+
+            <!-- Empty-state hint, so a new paddock explains itself -->
+            <TextBlock Text="Drag desktop icons here"
+                       Visibility="{Binding EmptyHintVisibility}"
+                       Foreground="{DynamicResource PaddockTitleText}"
+                       FontFamily="Segoe UI Variable, Segoe UI"
+                       FontSize="11.5"
+                       Opacity="0.7"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap"
+                       Margin="16,32,16,16"
+                       IsHitTestVisible="False"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center" />
+
             <!-- Title area — handles drag-to-move and roll-up -->
             <Border x:Name="TitleArea"
                     Height="32"
                     VerticalAlignment="Top"
                     Background="Transparent"
                     MouseLeftButtonDown="TitleBar_MouseLeftButtonDown"
+                    MouseMove="TitleBar_MouseMove"
+                    MouseLeftButtonUp="TitleBar_MouseLeftButtonUp"
                     Cursor="SizeAll">
 
                 <Grid>
@@ -100,6 +156,7 @@
                                Margin="14,0,36,0"
                                VerticalAlignment="Center"
                                HorizontalAlignment="Left"
+                               TextTrimming="CharacterEllipsis"
                                Visibility="Visible" />
 
                     <!-- Inline rename textbox (shown during rename) -->
@@ -115,9 +172,8 @@
                 </Grid>
             </Border>
 
-            <!-- Hover-only chrome (close, resize grip) -->
-            <Grid x:Name="HoverChrome" Opacity="0" IsHitTestVisible="True">
-                <!-- Close button -->
+            <!-- Hover-only chrome (close button, resize grip dots) -->
+            <Grid x:Name="HoverChrome" Opacity="0">
                 <Border Width="20" Height="20"
                         CornerRadius="10"
                         Background="{DynamicResource PaddockCloseBackground}"
@@ -125,6 +181,7 @@
                         VerticalAlignment="Top"
                         Margin="0,6,8,0"
                         Cursor="Hand"
+                        ToolTip="Remove paddock — its icons go back to the desktop"
                         MouseLeftButtonDown="CloseButton_Click">
                     <TextBlock Text="&#xD7;"
                                FontSize="14"
@@ -135,7 +192,6 @@
                                Margin="0,-2,0,0" />
                 </Border>
 
-                <!-- Resize grip dots (bottom-right) -->
                 <Canvas Width="12" Height="12"
                         HorizontalAlignment="Right"
                         VerticalAlignment="Bottom"
@@ -157,48 +213,6 @@
                    Visibility="{Binding ContentVisibility}"
                    DragDelta="ResizeGrip_DragDelta"
                    DragCompleted="ResizeGrip_DragCompleted" />
-
-            <!-- Icon grid (hidden when rolled up) -->
-            <ItemsControl ItemsSource="{Binding Icons}"
-                          Margin="10,32,10,10"
-                          AllowDrop="True"
-                          Drop="IconArea_Drop"
-                          DragOver="IconArea_DragOver"
-                          Visibility="{Binding ContentVisibility}">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <WrapPanel Orientation="Horizontal" />
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <StackPanel Width="76" Height="84"
-                                    Margin="2"
-                                    Background="Transparent"
-                                    MouseLeftButtonDown="Icon_MouseLeftButtonDown"
-                                    MouseRightButtonDown="Icon_RightClick"
-                                    MouseMove="Icon_MouseMove"
-                                    Cursor="Hand"
-                                    ToolTip="{Binding DisplayName}">
-
-                            <Image Source="{Binding IconImage}"
-                                   Width="44" Height="44"
-                                   HorizontalAlignment="Center"
-                                   Margin="0,8,0,4" />
-
-                            <TextBlock Text="{Binding DisplayName}"
-                                       Foreground="{DynamicResource PaddockIconText}"
-                                       FontFamily="Segoe UI Variable, Segoe UI"
-                                       FontSize="10.5"
-                                       FontWeight="Regular"
-                                       TextAlignment="Center"
-                                       TextTrimming="CharacterEllipsis"
-                                       LineHeight="14"
-                                       MaxHeight="28" />
-                        </StackPanel>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
         </Grid>
     </Border>
 </UserControl>

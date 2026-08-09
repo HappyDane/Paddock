@@ -4,12 +4,29 @@ namespace Paddock.Core.Services;
 
 public class PaddockManager
 {
+    private const int IconsPerRow = 4;
+
     private readonly SettingsService _settingsService;
+    private readonly IconStore? _iconStore;
 
     public PaddockManager(SettingsService settingsService)
+        : this(settingsService, null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a manager that also moves the physical files behind icons.
+    /// Pass <c>null</c> for <paramref name="iconStore"/> to keep the manager
+    /// purely in-memory (used by tests and by headless callers).
+    /// </summary>
+    public PaddockManager(SettingsService settingsService, IconStore? iconStore)
     {
         _settingsService = settingsService;
+        _iconStore = iconStore;
     }
+
+    /// <summary>The attached file store, or <c>null</c> for in-memory use.</summary>
+    public IconStore? Store => _iconStore;
 
     public List<PaddockModel> GetPaddocks()
     {
@@ -34,6 +51,7 @@ public class PaddockManager
         };
 
         _settingsService.GetActiveCorral().Paddocks.Add(paddock);
+        _iconStore?.EnsurePaddockFolder(paddock.Id);
         SaveLayout();
 
         return paddock;
@@ -44,6 +62,10 @@ public class PaddockManager
         return GetPaddocks().FirstOrDefault(p => p.Id == id);
     }
 
+    /// <summary>
+    /// Deletes a paddock. Any items it holds are moved back to the desktop
+    /// first, so removing a paddock never loses files.
+    /// </summary>
     public bool DeletePaddock(string id)
     {
         var paddocks = GetPaddocks();
@@ -51,37 +73,75 @@ public class PaddockManager
         if (paddock is null)
             return false;
 
+        _iconStore?.EvacuatePaddock(id);
+
         paddocks.Remove(paddock);
         SaveLayout();
         return true;
     }
 
-    public void AddIconToPaddock(string paddockId, string desktopPath)
+    /// <summary>
+    /// Adds an item to a paddock, moving it off the desktop when an
+    /// <see cref="IconStore"/> is attached. Returns the new entry, or the
+    /// existing one when the item was already in this paddock.
+    /// </summary>
+    public IconEntry? AddIconToPaddock(string paddockId, string sourcePath)
     {
         var paddock = GetPaddock(paddockId);
-        if (paddock is null)
-            return;
+        if (paddock is null || string.IsNullOrWhiteSpace(sourcePath))
+            return null;
 
-        if (paddock.Icons.Any(i => i.DesktopPath == desktopPath))
-            return;
+        var existing = FindEntry(paddock, sourcePath);
+        if (existing is not null)
+            return existing;
 
-        var nextPosition = GetNextGridPosition(paddock);
-        paddock.Icons.Add(new IconEntry
+        var path = sourcePath;
+        var managed = false;
+
+        if (_iconStore is not null)
         {
-            DesktopPath = desktopPath,
-            GridPosition = nextPosition
-        });
+            var moved = _iconStore.MoveIntoPaddock(sourcePath, paddockId);
+            if (moved is not null)
+            {
+                path = moved;
+                managed = true;
+            }
+            else if (!IconStore.ItemExists(sourcePath))
+            {
+                // Stale path (already moved, or deleted behind our back) — adding
+                // it would leave a phantom icon pointing at nothing.
+                return null;
+            }
+        }
 
+        // The move may have renamed the item to avoid a collision.
+        existing = FindEntry(paddock, path);
+        if (existing is not null)
+            return existing;
+
+        var entry = new IconEntry
+        {
+            DesktopPath = path,
+            Managed = managed,
+            GridPosition = GetNextGridPosition(paddock)
+        };
+
+        paddock.Icons.Add(entry);
         SaveLayout();
+        return entry;
     }
 
-    public void RemoveIconFromPaddock(string paddockId, string desktopPath)
+    /// <summary>
+    /// Forgets an icon without touching the file on disk.
+    /// Use <see cref="EjectIcon"/> to also put the file back on the desktop.
+    /// </summary>
+    public void RemoveIconFromPaddock(string paddockId, string path)
     {
         var paddock = GetPaddock(paddockId);
         if (paddock is null)
             return;
 
-        var icon = paddock.Icons.FirstOrDefault(i => i.DesktopPath == desktopPath);
+        var icon = FindEntry(paddock, path);
         if (icon is not null)
         {
             paddock.Icons.Remove(icon);
@@ -89,26 +149,101 @@ public class PaddockManager
         }
     }
 
-    public void MoveIconBetweenPaddocks(string sourcePaddockId, string targetPaddockId, string desktopPath)
+    /// <summary>
+    /// Takes an item out of a paddock and puts it back on the desktop.
+    /// Returns the item's path on the desktop, or <c>null</c> if it was only
+    /// referenced (never moved) or is no longer on disk.
+    /// </summary>
+    public string? EjectIcon(string paddockId, string path)
+    {
+        var paddock = GetPaddock(paddockId);
+        if (paddock is null)
+            return null;
+
+        var icon = FindEntry(paddock, path);
+        if (icon is null)
+            return null;
+
+        string? desktopPath = null;
+        if (icon.Managed && _iconStore is not null)
+            desktopPath = _iconStore.MoveToDesktop(icon.DesktopPath);
+
+        paddock.Icons.Remove(icon);
+        SaveLayout();
+        return desktopPath;
+    }
+
+    public void MoveIconBetweenPaddocks(string sourcePaddockId, string targetPaddockId, string path)
     {
         var source = GetPaddock(sourcePaddockId);
         var target = GetPaddock(targetPaddockId);
-        if (source is null || target is null)
+        if (source is null || target is null || source.Id == target.Id)
             return;
 
-        var icon = source.Icons.FirstOrDefault(i => i.DesktopPath == desktopPath);
+        var icon = FindEntry(source, path);
         if (icon is null)
             return;
 
         // Prevent duplicates in target
-        if (target.Icons.Any(i => i.DesktopPath == desktopPath))
+        if (FindEntry(target, icon.DesktopPath) is not null)
             return;
+
+        if (icon.Managed && _iconStore is not null)
+        {
+            var moved = _iconStore.MoveIntoPaddock(icon.DesktopPath, targetPaddockId);
+            if (moved is not null)
+                icon.DesktopPath = moved;
+        }
 
         source.Icons.Remove(icon);
         icon.GridPosition = GetNextGridPosition(target);
         target.Icons.Add(icon);
 
         SaveLayout();
+    }
+
+    /// <summary>
+    /// Brings every paddock back in line with what is actually on disk: drops
+    /// entries whose file is gone, and picks up files that appeared in a
+    /// paddock's folder while the app was closed (or were dropped there via
+    /// Explorer). No-op when the manager has no <see cref="IconStore"/>.
+    /// </summary>
+    public bool ReconcilePaddocks()
+    {
+        if (_iconStore is null)
+            return false;
+
+        var changed = false;
+
+        foreach (var paddock in GetPaddocks())
+        {
+            var touched = paddock.Icons.RemoveAll(i => !IconStore.ItemExists(i.DesktopPath)) > 0;
+
+            foreach (var item in _iconStore.ListPaddockItems(paddock.Id))
+            {
+                if (FindEntry(paddock, item) is not null)
+                    continue;
+
+                paddock.Icons.Add(new IconEntry
+                {
+                    DesktopPath = item,
+                    Managed = true,
+                    GridPosition = GetNextGridPosition(paddock)
+                });
+                touched = true;
+            }
+
+            if (!touched)
+                continue;
+
+            ReassignGridPositions(paddock);
+            changed = true;
+        }
+
+        if (changed)
+            SaveLayout();
+
+        return changed;
     }
 
     /// <summary>
@@ -123,25 +258,7 @@ public class PaddockManager
         paddock.SortBy = sortBy;
         paddock.SortAscending = ascending;
 
-        var sorted = sortBy switch
-        {
-            SortField.Name => ascending
-                ? paddock.Icons.OrderBy(i => Path.GetFileNameWithoutExtension(i.DesktopPath), StringComparer.OrdinalIgnoreCase).ToList()
-                : paddock.Icons.OrderByDescending(i => Path.GetFileNameWithoutExtension(i.DesktopPath), StringComparer.OrdinalIgnoreCase).ToList(),
-
-            SortField.FileType => ascending
-                ? paddock.Icons.OrderBy(i => Path.GetExtension(i.DesktopPath), StringComparer.OrdinalIgnoreCase).ToList()
-                : paddock.Icons.OrderByDescending(i => Path.GetExtension(i.DesktopPath), StringComparer.OrdinalIgnoreCase).ToList(),
-
-            SortField.DateModified => SortByFileDate(paddock.Icons, ascending),
-
-            SortField.FileSize => SortByFileSize(paddock.Icons, ascending),
-
-            _ => paddock.Icons
-        };
-
-        // Reassign grid positions after sort
-        paddock.Icons = sorted;
+        paddock.Icons = GetSortedIcons(paddock);
         ReassignGridPositions(paddock);
         SaveLayout();
     }
@@ -172,6 +289,10 @@ public class PaddockManager
         _settingsService.Save();
     }
 
+    private static IconEntry? FindEntry(PaddockModel paddock, string path)
+        => paddock.Icons.FirstOrDefault(i =>
+            string.Equals(i.DesktopPath, path, StringComparison.OrdinalIgnoreCase));
+
     private static List<IconEntry> SortByFileDate(List<IconEntry> icons, bool ascending)
     {
         return ascending
@@ -200,28 +321,23 @@ public class PaddockManager
 
     private static void ReassignGridPositions(PaddockModel paddock)
     {
-        const int iconsPerRow = 4;
         for (var i = 0; i < paddock.Icons.Count; i++)
         {
             paddock.Icons[i].GridPosition = new GridPosition
             {
-                Row = i / iconsPerRow,
-                Col = i % iconsPerRow
+                Row = i / IconsPerRow,
+                Col = i % IconsPerRow
             };
         }
     }
 
     private static GridPosition GetNextGridPosition(PaddockModel paddock)
     {
-        if (paddock.Icons.Count == 0)
-            return new GridPosition { Row = 0, Col = 0 };
-
-        const int iconsPerRow = 4;
         var count = paddock.Icons.Count;
         return new GridPosition
         {
-            Row = count / iconsPerRow,
-            Col = count % iconsPerRow
+            Row = count / IconsPerRow,
+            Col = count % IconsPerRow
         };
     }
 }

@@ -4,7 +4,6 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using Paddock.Core.Models;
 using Paddock.Shell;
 
@@ -26,17 +25,20 @@ public class IconViewModel : INotifyPropertyChanged
         _iconExtractor = iconExtractor;
     }
 
-    public string DisplayName => Path.GetFileNameWithoutExtension(_entry.DesktopPath);
+    /// <summary>
+    /// Label shown under the icon. Extensions are dropped the way the desktop
+    /// does it, but a folder called "My.Stuff" keeps its whole name.
+    /// </summary>
+    public string DisplayName => Directory.Exists(_entry.DesktopPath)
+        ? Path.GetFileName(_entry.DesktopPath)
+        : Path.GetFileNameWithoutExtension(_entry.DesktopPath);
 
     public string FullPath => _entry.DesktopPath;
 
-    public ImageSource? IconImage
-    {
-        get
-        {
-            return _iconExtractor.GetIcon(_entry.DesktopPath);
-        }
-    }
+    /// <summary>True when Paddock moved this item off the desktop.</summary>
+    public bool IsManaged => _entry.Managed;
+
+    public ImageSource? IconImage => _iconExtractor.GetIcon(_entry.DesktopPath);
 
     public void Launch()
     {
@@ -45,7 +47,8 @@ public class IconViewModel : INotifyPropertyChanged
             Process.Start(new ProcessStartInfo
             {
                 FileName = _entry.DesktopPath,
-                UseShellExecute = true
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(_entry.DesktopPath) ?? string.Empty
             });
         }
         catch (Exception ex)

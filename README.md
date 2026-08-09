@@ -18,9 +18,9 @@ Create styled zones on your desktop to group and organize icons. Clean, minimal,
 
 **Roll-Up** — Double-click a zone's title bar to collapse it to just the title. Configurable expand trigger: click or hover.
 
-**Drag & Drop** — Drag icons between zones, drag files from Explorer into zones, or drag icons back to the desktop.
+**Drag & Drop** — Drag desktop icons into a zone and they leave the desktop. Drag them between zones, or back out to the desktop again.
 
-**Quick Hide** — Double-click the desktop to hide all zones instantly. Mark specific zones as "always visible" to exclude them.
+**Quick Hide** — Hide and show all zones from the tray icon (double-click it) or with a hotkey (`Ctrl+F12` by default). Mark specific zones as "always visible" to exclude them.
 
 **Layout Snapshots** — Save your zone layout as a named profile. Switch between profiles, export as `.paddock` files, share with others.
 
@@ -28,7 +28,37 @@ Create styled zones on your desktop to group and organize icons. Clean, minimal,
 
 **Shell Integration** — Right-click any icon for the native Windows context menu (Open, Open With, Properties, etc.). Real file icons extracted via Shell32.
 
-**Startup** — Optionally runs on Windows startup. Embeds directly into the desktop shell.
+**Lives on the desktop** — Zones sit above the wallpaper and desktop icons but always below every application window: they never cover what you are working on, and they never steal focus. The bare desktop keeps behaving normally — right-click, rubber-band selection and icon dragging are untouched, because Paddock puts no overlay there.
+
+**Startup** — Optionally runs on Windows startup.
+
+---
+
+## How icons work
+
+Windows only draws the *top level* of your Desktop folder, so the only reliable
+way to take an icon off the desktop is to move the file. Paddock does exactly
+that, and keeps it close to home:
+
+- Each zone owns a folder at `%USERPROFILE%\Desktop\.Paddock\<zone-id>` (hidden,
+  so it is not itself a desktop icon).
+- Dropping a desktop item into a zone **moves** it there — that is why the icon
+  disappears from the desktop.
+- Dragging it out, or removing the zone, **moves it straight back** to the desktop.
+  Nothing is ever deleted, and no name is ever overwritten (`file (2).txt`).
+- Items dragged in from somewhere other than the desktop (a folder in Explorer)
+  are only *referenced* — Paddock never relocates files from outside your desktop.
+- Tray menu → **Restore All Icons to Desktop** empties every zone in one go.
+
+Because the files really are on disk, zones survive restarts, and anything you
+drop into a zone's folder from Explorer shows up in the zone.
+
+### Getting icons into a zone
+
+Draw a zone on an empty part of the desktop, then either drag icons in, or use
+the zone's right-click menu → **Collect Desktop Items** to move everything at
+once. Paddock does not yet work out which icons were sitting *underneath* a new
+zone — see [Known limitations](#known-limitations).
 
 ---
 
@@ -79,6 +109,22 @@ Settings are stored at `%AppData%/Paddock/settings.json` and include:
 - Roll-up expand mode (click/hover)
 - Layout profiles (corrals)
 - Auto-sort rules
+
+---
+
+## Known limitations
+
+- **Icons underneath a new zone are not collected automatically.** Reading the
+  desktop's icon positions means poking around inside Explorer's list view from
+  another process; until that is in, draw zones on free space and use
+  **Collect Desktop Items** or drag icons in.
+- **All-users desktop items** (`C:\Users\Public\Desktop`) are left alone —
+  moving them would change the desktop for every account on the machine. Drag
+  one into a zone and it is referenced in place, so it stays on the desktop too.
+- **Zones cover the desktop area they occupy.** Desktop icons behind a zone are
+  hidden by it, exactly as a real fence would be.
+- **Per-monitor DPI**: Paddock is system-DPI aware, so on a mixed-DPI setup zones
+  are sized from the primary monitor's scale factor.
 
 ---
 
