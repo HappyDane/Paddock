@@ -32,6 +32,14 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // Paddock relaunches itself elevated to take shortcuts off the
+        // all-users desktop; that copy does its one job and leaves.
+        if (e.Args.Length == 2 && e.Args[0] == SharedDesktopRemover.HelperSwitch)
+        {
+            Shutdown(SharedDesktopRemover.RunHelper(e.Args[1]));
+            return;
+        }
+
         InstallCrashHandlers();
         Log.Info($"Paddock starting (v{typeof(App).Assembly.GetName().Version}).");
 
@@ -48,7 +56,7 @@ public partial class App : Application
         Settings = new SettingsService();
         DesktopIconService = new DesktopIconService();
         IconStore = DesktopIconService.CreateIconStore();
-        PaddockManager = new PaddockManager(Settings, IconStore);
+        PaddockManager = new PaddockManager(Settings, IconStore, DesktopIconService.CreateSharedDesktopRemover());
         LayoutEngine = new LayoutEngine();
         IconExtractor = new IconExtractor();
         ShellHookService = new ShellHookService();
@@ -307,6 +315,7 @@ public partial class App : Application
 
         _hotkeys?.Dispose();
         Host?.Dispose();
+        ShellHookService?.Dispose();
         DesktopIconService?.Dispose();
         IconExtractor?.Dispose();
 

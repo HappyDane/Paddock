@@ -268,18 +268,30 @@ public partial class PaddockControl : UserControl
     {
         DropHighlight.Visibility = Visibility.Collapsed;
 
-        var sourcePaddockId = ViewModel.HandleDrop(e);
+        // Read the drop now, act on it once the drag has finished. The drag
+        // source (Explorer, for a desktop icon) is blocked until this handler
+        // returns, and moving files — perhaps after a permission prompt — is
+        // better done once it has been let go.
+        var request = ViewModel.ReadDrop(e.Data);
 
-        if (sourcePaddockId is not null)
-            CurrentApp.Host?.RefreshPaddock(sourcePaddockId);
-
-        CurrentApp.DesktopIconService.NotifyShellOfDesktopChange();
-
-        // We moved the files ourselves, so tell the drag source there is nothing
-        // left for it to clean up. Reporting Move here would invite Explorer to
-        // delete a source path we have already emptied.
+        // We move the files ourselves, so tell the drag source there is nothing
+        // left for it to do. Reporting Move here would invite Explorer to
+        // delete a source path we are about to empty.
         e.Effects = DragDropEffects.None;
         e.Handled = true;
+
+        if (request is null)
+            return;
+
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+        {
+            var sourcePaddockId = ViewModel.ApplyDrop(request);
+
+            if (sourcePaddockId is not null)
+                CurrentApp.Host?.RefreshPaddock(sourcePaddockId);
+
+            CurrentApp.DesktopIconService.NotifyShellOfDesktopChange();
+        });
     }
 
     // --- Icons ---
@@ -330,28 +342,39 @@ public partial class PaddockControl : UserControl
             DesktopPath = icon.FullPath
         });
 
-        // Also offer the plain file, so the item can be dropped into Explorer
-        // or any other application that accepts files.
+        // Also offer the plain file, so the item can be dropped onto the
+        // desktop, into a folder, or into any application that accepts files.
         data.SetData(DataFormats.FileDrop, new[] { icon.FullPath });
 
-        DragDrop.DoDragDrop(element, data, DragDropEffects.Move | DragDropEffects.Copy);
+        // Only items Paddock moved in may be moved out again. A referenced item
+        // lives in the user's own folder somewhere; dragging it out must never
+        // relocate that file, so drop targets are only offered a copy or link.
+        var allowed = icon.IsManaged
+            ? DragDropEffects.Move | DragDropEffects.Copy | DragDropEffects.Link
+            : DragDropEffects.Copy | DragDropEffects.Link;
+
+        var result = DragDrop.DoDragDrop(element, data, allowed);
 
         _iconDragStarted = false;
-        HandleIconDragFinished(icon);
+        HandleIconDragFinished(result);
     }
 
     /// <summary>
-    /// After a drag ends: if the item was not dropped on a paddock, it belongs
-    /// back on the desktop. That also cleans up the entry when another
-    /// application (Explorer, say) moved the file itself.
+    /// After an icon drag ends, whoever accepted the drop has done the work:
+    /// another paddock moves the item itself, and Explorer — the desktop, or a
+    /// folder window — moves or copies the file. Paddock must not move it as
+    /// well: Explorer finishes its move in the background, so a second move
+    /// here would race it for the same file (and an icon dropped into, say, an
+    /// e-mail would wrongly be thrown out of the paddock). The store watcher
+    /// sees the file leave and updates the paddock; refreshing now just makes
+    /// that immediate when the move was quick.
     /// </summary>
-    private void HandleIconDragFinished(IconViewModel icon)
+    private static void HandleIconDragFinished(DragDropEffects result)
     {
-        var droppedOnPaddock = CurrentApp.Host?.FindWindowAt(ScreenHelper.GetCursorPosition()) is not null;
-        if (droppedOnPaddock)
+        if (result == DragDropEffects.None)
             return;
 
-        ViewModel.EjectIcon(icon.FullPath);
+        CurrentApp.Host?.RefreshFromDisk();
         CurrentApp.DesktopIconService.NotifyShellOfDesktopChange();
     }
 

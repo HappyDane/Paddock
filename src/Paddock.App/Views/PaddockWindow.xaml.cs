@@ -81,6 +81,7 @@ public partial class PaddockWindow : Window
         if (_source is not null)
         {
             _source.RemoveHook(WndProc);
+            _shellHook.Release(_source.Handle);
             _source = null;
         }
 

@@ -148,6 +148,10 @@ public class PaddockViewModel : INotifyPropertyChanged
         {
             _manager.SortPaddockIcons(_model.Id, value, _model.SortAscending);
             OnPropertyChanged();
+            OnPropertyChanged(nameof(IsSortedByName));
+            OnPropertyChanged(nameof(IsSortedByDate));
+            OnPropertyChanged(nameof(IsSortedByType));
+            OnPropertyChanged(nameof(IsSortedBySize));
             RefreshIcons();
         }
     }
@@ -162,6 +166,12 @@ public class PaddockViewModel : INotifyPropertyChanged
             RefreshIcons();
         }
     }
+
+    // Menu checkmarks for the current sort.
+    public bool IsSortedByName => _model.SortBy == SortField.Name;
+    public bool IsSortedByDate => _model.SortBy == SortField.DateModified;
+    public bool IsSortedByType => _model.SortBy == SortField.FileType;
+    public bool IsSortedBySize => _model.SortBy == SortField.FileSize;
 
     // --- Styling ---
 
@@ -309,59 +319,53 @@ public class PaddockViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Takes the files described by a drop and puts them in this paddock,
-    /// moving desktop items off the desktop. Returns the id of the paddock the
-    /// items came from, when they came from another paddock.
+    /// Reads what a drop carries. This has to happen inside the drop handler —
+    /// the data object belongs to the drag source and is gone once the handler
+    /// returns — but acting on it should not: see <see cref="ApplyDrop"/>.
     /// </summary>
-    public string? HandleDrop(DragEventArgs e)
+    public DropRequest? ReadDrop(IDataObject data)
     {
-        if (e.Data.GetDataPresent(typeof(IconDragData)))
+        if (data.GetDataPresent(typeof(IconDragData)))
         {
-            if (e.Data.GetData(typeof(IconDragData)) is not IconDragData data || data.SourcePaddockId == Id)
-                return null;
-
-            _manager.MoveIconBetweenPaddocks(data.SourcePaddockId, Id, data.DesktopPath);
-            RefreshIcons();
-            return data.SourcePaddockId;
+            return data.GetData(typeof(IconDragData)) is IconDragData icon && icon.SourcePaddockId != Id
+                ? new DropRequest(icon, [])
+                : null;
         }
 
-        if (e.Data.GetDataPresent(DataFormats.FileDrop))
-        {
-            if (e.Data.GetData(DataFormats.FileDrop) is not string[] files)
-                return null;
-
-            foreach (var file in files)
-            {
-                _manager.AddIconToPaddock(Id, file);
-            }
-
-            RefreshIcons();
-        }
+        if (data.GetDataPresent(DataFormats.FileDrop) && data.GetData(DataFormats.FileDrop) is string[] { Length: > 0 } files)
+            return new DropRequest(null, files);
 
         return null;
     }
 
-    /// <summary>Adds a single item, moving it off the desktop.</summary>
-    public void AddIcon(string path)
+    /// <summary>
+    /// Puts dropped items in this paddock, moving desktop items off the
+    /// desktop. Returns the id of the paddock the item came from, when it came
+    /// from another paddock, so that one can be redrawn too.
+    /// </summary>
+    public string? ApplyDrop(DropRequest request)
     {
-        _manager.AddIconToPaddock(Id, path);
-        RefreshIcons();
+        if (request.Icon is { } icon)
+        {
+            _manager.MoveIconBetweenPaddocks(icon.SourcePaddockId, Id, icon.DesktopPath);
+            RefreshIcons();
+            return icon.SourcePaddockId;
+        }
+
+        AddIcons(request.Files);
+        return null;
     }
 
+    /// <summary>Adds a single item, moving it off the desktop.</summary>
+    public void AddIcon(string path) => AddIcons([path]);
+
     /// <summary>
-    /// Adds several items in one pass: one settings write and one grid refresh
-    /// for the whole batch, however many items there are.
+    /// Adds several items in one pass: one settings write, one grid refresh and
+    /// at most one permission prompt for the whole batch.
     /// </summary>
     public void AddIcons(IEnumerable<string> paths)
     {
-        using (_manager.DeferSave())
-        {
-            foreach (var path in paths)
-            {
-                _manager.AddIconToPaddock(Id, path);
-            }
-        }
-
+        _manager.AddIconsToPaddock(Id, paths);
         RefreshIcons();
     }
 
@@ -493,6 +497,9 @@ public class PaddockViewModel : INotifyPropertyChanged
     protected void OnPropertyChanged([CallerMemberName] string? name = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
+
+/// <summary>What a drop onto a paddock carries: one icon from another paddock, or files.</summary>
+public sealed record DropRequest(IconDragData? Icon, IReadOnlyList<string> Files);
 
 /// <summary>
 /// Payload for dragging an icon out of a paddock — into another paddock, or out

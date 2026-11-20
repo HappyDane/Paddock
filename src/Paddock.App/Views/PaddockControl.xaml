@@ -60,13 +60,21 @@
             </MenuItem>
             <Separator />
             <MenuItem Header="Sort By">
-                <MenuItem Header="Name" Click="Sort_Name" />
-                <MenuItem Header="Date Modified" Click="Sort_Date" />
-                <MenuItem Header="File Type" Click="Sort_Type" />
-                <MenuItem Header="File Size" Click="Sort_Size" />
+                <MenuItem Header="Name" IsCheckable="True"
+                          IsChecked="{Binding IsSortedByName, Mode=OneWay}"
+                          Click="Sort_Name" />
+                <MenuItem Header="Date Modified" IsCheckable="True"
+                          IsChecked="{Binding IsSortedByDate, Mode=OneWay}"
+                          Click="Sort_Date" />
+                <MenuItem Header="File Type" IsCheckable="True"
+                          IsChecked="{Binding IsSortedByType, Mode=OneWay}"
+                          Click="Sort_Type" />
+                <MenuItem Header="File Size" IsCheckable="True"
+                          IsChecked="{Binding IsSortedBySize, Mode=OneWay}"
+                          Click="Sort_Size" />
                 <Separator />
                 <MenuItem Header="Ascending" IsCheckable="True"
-                          IsChecked="{Binding SortAscending}"
+                          IsChecked="{Binding SortAscending, Mode=OneWay}"
                           Click="Sort_ToggleDirection" />
             </MenuItem>
             <Separator />
@@ -95,6 +103,13 @@
                           Background="Transparent"
                           Visibility="{Binding ContentVisibility}">
                 <ItemsControl ItemsSource="{Binding Icons}">
+                    <!-- Names each icon for UI Automation (screen readers, and
+                         the desktop smoke test) instead of the view model's type name. -->
+                    <ItemsControl.ItemContainerStyle>
+                        <Style TargetType="ContentPresenter">
+                            <Setter Property="AutomationProperties.Name" Value="{Binding DisplayName}" />
+                        </Style>
+                    </ItemsControl.ItemContainerStyle>
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                             <WrapPanel Orientation="Horizontal" />

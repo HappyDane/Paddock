@@ -12,6 +12,9 @@ namespace Paddock.Core.Services;
 ///
 /// Only items that live on the desktop (or already inside another paddock) are
 /// ever moved. Anything dragged in from elsewhere is referenced where it is.
+/// Items on the desktop shared by all accounts are the one special case: they
+/// are <see cref="CopyIntoPaddock">copied</see> in, and the original is removed
+/// separately (that needs permission — see <see cref="ISharedDesktopRemover"/>).
 ///
 /// Both roots are injected, so this type performs no Windows-specific calls and
 /// is unit-testable against temp directories.
@@ -20,17 +23,24 @@ public class IconStore
 {
     private static readonly string[] IgnoredNames = ["desktop.ini", "thumbs.db"];
 
-    public IconStore(string desktopRoot, string storeRoot)
+    public IconStore(string desktopRoot, string storeRoot, string? sharedDesktopRoot = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(desktopRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(storeRoot);
 
         DesktopRoot = Normalize(desktopRoot);
         StoreRoot = Normalize(storeRoot);
+        SharedDesktopRoot = string.IsNullOrWhiteSpace(sharedDesktopRoot) ? null : Normalize(sharedDesktopRoot);
     }
 
     /// <summary>The user's Desktop folder — where ejected items are placed.</summary>
     public string DesktopRoot { get; }
+
+    /// <summary>
+    /// The desktop shared by every account (<c>C:\Users\Public\Desktop</c>),
+    /// whose items also appear on this user's desktop. <c>null</c> when unknown.
+    /// </summary>
+    public string? SharedDesktopRoot { get; }
 
     /// <summary>Parent folder holding one subfolder per paddock.</summary>
     public string StoreRoot { get; }
@@ -50,6 +60,21 @@ public class IconStore
     {
         var parent = GetParentDirectory(path);
         return parent is not null && PathEquals(parent, DesktopRoot);
+    }
+
+    /// <summary>
+    /// True when the path is a file directly on the all-users desktop — the
+    /// kind of item that can be copied into a paddock and then removed there.
+    /// Folders are left alone: copying a whole tree to hide one icon is not a
+    /// trade worth making silently.
+    /// </summary>
+    public bool IsOnSharedDesktop(string path)
+    {
+        if (SharedDesktopRoot is null)
+            return false;
+
+        var parent = GetParentDirectory(path);
+        return parent is not null && PathEquals(parent, SharedDesktopRoot) && File.Exists(path);
     }
 
     /// <summary>True when the path lives inside any paddock folder.</summary>
@@ -98,6 +123,54 @@ public class IconStore
         {
             Log.Error($"Could not move '{source}' into paddock '{paddockId}'.", ex);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Copies a file into the given paddock's folder, leaving the original
+    /// where it is. Returns the copy's path, or <c>null</c> on failure.
+    /// </summary>
+    public string? CopyIntoPaddock(string sourcePath, string paddockId)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath) || string.IsNullOrWhiteSpace(paddockId))
+            return null;
+
+        var source = Normalize(sourcePath);
+        if (!File.Exists(source))
+            return null;
+
+        try
+        {
+            var folder = EnsurePaddockFolder(paddockId);
+            var target = GetAvailablePath(folder, Path.GetFileName(source));
+            File.Copy(source, target);
+            return target;
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Could not copy '{source}' into paddock '{paddockId}'.", ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Deletes a copy made by <see cref="CopyIntoPaddock"/> that turned out not
+    /// to be needed. Refuses anything outside the store, so it can never touch
+    /// a user's original.
+    /// </summary>
+    public void DiscardCopy(string copyPath)
+    {
+        if (!IsInStore(copyPath))
+            return;
+
+        try
+        {
+            if (File.Exists(copyPath))
+                File.Delete(copyPath);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not remove the unneeded copy '{copyPath}': {ex.Message}");
         }
     }
 

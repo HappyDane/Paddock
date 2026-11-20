@@ -1,0 +1,75 @@
+name: windows
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build, unit-test and publish
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Unit tests
+        run: dotnet test -c Release
+
+      - name: Publish single-file Paddock.exe
+        run: dotnet publish src/Paddock.App -c Release -p:PublishProfile=win-x64
+
+      - name: Upload Paddock.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: Paddock-win-x64
+          path: artifacts/publish/win-x64/Paddock.exe
+          if-no-files-found: error
+
+  desktop-smoke:
+    # Drives the published exe on a real Windows desktop: drags icons in and
+    # out with the mouse, sorts, Show Desktop, restart, remove. See
+    # tests/Paddock.DesktopSmoke.
+    name: Desktop smoke test (${{ matrix.os }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        # 2022 has the Windows 10-era desktop, 2025 the Windows 11 24H2 one.
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Paddock-win-x64
+          path: app
+
+      - name: Build the smoke test
+        run: dotnet build tests/Paddock.DesktopSmoke -c Release -o smoke-bin
+
+      - name: Run the smoke test
+        env:
+          PADDOCK_SMOKE_TEST: "1"
+        run: ./smoke-bin/Paddock.DesktopSmoke.exe --exe app/Paddock.exe --out smoke-out
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-${{ matrix.os }}
+          path: smoke-out

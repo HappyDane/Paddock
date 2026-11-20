@@ -69,7 +69,47 @@ internal static partial class NativeMethods
         internal uint flags;
     }
 
+    [LibraryImport("user32.dll")]
+    internal static partial IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool IsWindowVisible(IntPtr hWnd);
+
+    /// <summary>GetWindow: the window above the given one in the z-order.</summary>
+    internal const uint GW_HWNDPREV = 3;
+
+    internal static readonly IntPtr HWND_TOP = IntPtr.Zero;
     internal static readonly IntPtr HWND_BOTTOM = new(1);
+
+    // -- Win events --
+
+    internal delegate void WinEventProc(
+        IntPtr hWinEventHook,
+        uint eventType,
+        IntPtr hwnd,
+        int idObject,
+        int idChild,
+        uint idEventThread,
+        uint dwmsEventTime);
+
+    internal const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+    internal const uint WINEVENT_OUTOFCONTEXT = 0x0000;
+    internal const uint WINEVENT_SKIPOWNPROCESS = 0x0002;
+
+    [DllImport("user32.dll")]
+    internal static extern IntPtr SetWinEventHook(
+        uint eventMin,
+        uint eventMax,
+        IntPtr hmodWinEventProc,
+        WinEventProc lpfnWinEventProc,
+        uint idProcess,
+        uint idThread,
+        uint dwFlags);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool UnhookWinEvent(IntPtr hWinEventHook);
 
     internal const uint SWP_NOSIZE = 0x0001;
     internal const uint SWP_NOMOVE = 0x0002;
@@ -86,6 +126,7 @@ internal static partial class NativeMethods
 
     internal const int GWL_EXSTYLE = -20;
     internal const int WS_EX_TOOLWINDOW = 0x00000080;
+    internal const int WS_EX_TOPMOST = 0x00000008;
 
     [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
     internal static partial IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
