@@ -356,9 +356,6 @@ public class PaddockViewModel : INotifyPropertyChanged
         return null;
     }
 
-    /// <summary>Adds a single item, moving it off the desktop.</summary>
-    public void AddIcon(string path) => AddIcons([path]);
-
     /// <summary>
     /// Adds several items in one pass: one settings write, one grid refresh and
     /// at most one permission prompt for the whole batch.
@@ -366,13 +363,6 @@ public class PaddockViewModel : INotifyPropertyChanged
     public void AddIcons(IEnumerable<string> paths)
     {
         _manager.AddIconsToPaddock(Id, paths);
-        RefreshIcons();
-    }
-
-    /// <summary>Puts an item back on the desktop and drops it from this paddock.</summary>
-    public void EjectIcon(string path)
-    {
-        _manager.EjectIcon(Id, path);
         RefreshIcons();
     }
 
