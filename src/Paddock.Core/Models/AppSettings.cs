@@ -8,6 +8,9 @@ public class AppSettings
     public bool QuickHideEnabled { get; set; } = true;
     public string QuickHideHotkey { get; set; } = "Ctrl+F12";
     public bool SnapEnabled { get; set; } = true;
+
+    /// <summary>Right-drag on empty desktop draws a new paddock.</summary>
+    public bool DrawOnDesktop { get; set; } = true;
     public double IntelligentSpacing { get; set; } = 12;
     public double DefaultOpacity { get; set; } = 0.88;
     public double DefaultCornerRadius { get; set; } = 16;

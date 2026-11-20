@@ -50,6 +50,14 @@ tests/
   files on the all-users desktop, which are *copied* in and the original removed
   via `ISharedDesktopRemover` (an elevated helper run of Paddock.exe, one
   permission prompt per batch; declining falls back to referencing).
+- **Right-drag on the desktop draws a paddock** without Paddock owning the
+  desktop: `DesktopGestureService` runs a low-level mouse hook on its *own*
+  thread (a hook on a busy UI thread stalls every mouse event in the session).
+  It swallows the right button only when it goes down on bare desktop
+  (`DesktopListView.IsBareDesktop`: Explorer's icon view, `LVM_HITTEST` says no
+  icon), and replays a plain right-click so Explorer's desktop menu still opens.
+  The state machine is `Core/DesktopDrawGesture` (unit-tested). Left-drag stays
+  the desktop's rubber-band selection. Keep the hook callback fast.
 - **Drops are read in the OLE callback, applied after it.** And after dragging an
   icon *out*, Paddock never moves the file itself: the drop target (Explorer)
   does, and the store watcher notices. Moving it too races Explorer.

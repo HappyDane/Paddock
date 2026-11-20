@@ -28,6 +28,9 @@ public partial class App : Application
     /// <summary>Owns the live paddock windows.</summary>
     internal PaddockHost? Host { get; private set; }
 
+    /// <summary>Right-drag on the desktop to draw a paddock.</summary>
+    private DesktopDrawController? _drawController;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -74,6 +77,9 @@ public partial class App : Application
 
         Host = new PaddockHost(this);
         Host.Start();
+
+        _drawController = new DesktopDrawController(this);
+        _drawController.SetEnabled(Settings.Settings.DrawOnDesktop);
 
         InitializeHotkeys();
 
@@ -159,7 +165,9 @@ public partial class App : Application
         _trayIcon?.ShowBalloonTip(
             7000,
             "Paddock is running",
-            "Right-click the tray icon and choose \"New Paddock...\", then drag an area on the desktop.",
+            Settings.Settings.DrawOnDesktop
+                ? "Hold the right mouse button on an empty part of the desktop and drag out an area."
+                : "Right-click the tray icon and choose \"New Paddock...\", then drag an area on the desktop.",
             System.Windows.Forms.ToolTipIcon.Info);
     }
 
@@ -205,6 +213,9 @@ public partial class App : Application
     }
 
     private void CreateNewPaddock() => Host?.CreatePaddockInteractive();
+
+    /// <summary>Turns right-drag-to-draw on the desktop on or off (from Settings).</summary>
+    internal void SetDesktopDrawing(bool enabled) => _drawController?.SetEnabled(enabled);
 
     private void TogglePaddocks() => Host?.ToggleQuickHide();
 
@@ -314,6 +325,7 @@ public partial class App : Application
         PaddockManager?.SaveLayout();
 
         _hotkeys?.Dispose();
+        _drawController?.Dispose();
         Host?.Dispose();
         ShellHookService?.Dispose();
         DesktopIconService?.Dispose();

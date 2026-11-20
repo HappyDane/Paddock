@@ -99,10 +99,15 @@ internal sealed class PaddockHost : IDisposable
         if (area is null)
             return;
 
-        CreatePaddock(area.Value);
+        CreatePaddock(area.Value, beginRename: true);
     }
 
-    internal void CreatePaddock(Rect screenArea)
+    /// <summary>
+    /// Creates a paddock over a screen area (DIPs). With <paramref name="beginRename"/>
+    /// its title opens for editing straight away, so a freshly drawn paddock can
+    /// be named without a trip to the context menu.
+    /// </summary>
+    internal void CreatePaddock(Rect screenArea, bool beginRename = false)
     {
         var model = _app.PaddockManager.CreatePaddock(
             title: "New Paddock",
@@ -121,6 +126,11 @@ internal sealed class PaddockHost : IDisposable
         var window = CreateWindow(model);
         window.PinToDesktop();
         UpdateZOrderTimer();
+
+        Log.Info($"Created paddock at {model.X:0},{model.Y:0} {model.Width:0}x{model.Height:0}.");
+
+        if (beginRename)
+            window.ViewModel.BeginRenameTitle();
     }
 
     internal void RemovePaddock(PaddockWindow window)

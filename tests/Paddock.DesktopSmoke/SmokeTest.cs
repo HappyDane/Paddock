@@ -69,6 +69,9 @@ internal sealed class SmokeTest
         Step("An all-users desktop shortcut can be grouped", GroupSharedItem);
         Step("Icons and layout survive a restart", Restart);
         Step("Removing the paddock returns its icons to the desktop", RemovePaddock);
+        Step("A plain right-click on the desktop still opens Explorer's menu", RightClickStillOpensDesktopMenu);
+        Step("Right-dragging on empty desktop offers to create a paddock there", RightDragCreatesPaddock);
+        Step("Clicking elsewhere withdraws the offer", ClickingElsewhereWithdrawsOffer);
         Step("Paddock logged no errors", LogHasNoErrors);
 
         Finish();
@@ -323,6 +326,89 @@ internal sealed class SmokeTest
             "settings.json still lists the paddock.");
     }
 
+    private void RightClickStillOpensDesktopMenu()
+    {
+        MinimiseOtherWindows();
+        var point = BareSpot(700, 520);
+
+        var explorer = Process.GetProcessesByName("explorer").Select(p => (uint)p.Id).ToHashSet();
+        var before = Native.TopLevelWindows().Where(Native.IsWindowVisible).ToHashSet();
+
+        Native.RightClick(point);
+
+        var menu = IntPtr.Zero;
+        WaitUntil(() => (menu = Native.TopLevelWindows().FirstOrDefault(h =>
+                Native.IsWindowVisible(h) && !before.Contains(h) && explorer.Contains(Native.ProcessOf(h)))) != IntPtr.Zero,
+            "Explorer's desktop menu to open", TimeSpan.FromSeconds(5));
+
+        Info($"Explorer opened {Describe(menu)}.");
+        Screenshot("desktop-menu");
+        Check(FindMenuItem("Create paddock here") is null, "Paddock offered a paddock for a plain right-click.");
+
+        for (var i = 0; i < 3 && Native.IsWindowVisible(menu); i++)
+        {
+            Native.Press(Native.VK_ESCAPE);
+            Thread.Sleep(400);
+        }
+
+        Check(!Native.IsWindowVisible(menu), "Explorer's desktop menu did not close.");
+    }
+
+    private void RightDragCreatesPaddock()
+    {
+        MinimiseOtherWindows();
+        var start = BareSpot(560, 140);
+        var end = new Point(860, 400);
+        var before = PaddockCount();
+
+        Native.Drag(start, end, rightButton: true);
+
+        var item = WaitFor(() => FindMenuItem("Create paddock here"), "the 'Create paddock here' menu", TimeSpan.FromSeconds(5));
+        Screenshot("create-offer");
+
+        var bounds = item.Current.BoundingRectangle;
+        Native.Click(new Point((int)(bounds.Left + bounds.Width / 2), (int)(bounds.Top + bounds.Height / 2)));
+
+        var created = IntPtr.Zero;
+        WaitUntil(() => (created = FindAppWindow("New Paddock")) != IntPtr.Zero, "the new paddock to appear");
+
+        Native.GetWindowRect(created, out var rect);
+        Info($"New paddock at {rect}.");
+        Check(Math.Abs(rect.Left - start.X) <= 4 && Math.Abs(rect.Top - start.Y) <= 4
+              && Math.Abs(rect.Right - end.X) <= 4 && Math.Abs(rect.Bottom - end.Y) <= 4,
+            $"The paddock {rect} does not match the drawn area ({start}-{end}).");
+        Check(PaddockCount() == before + 1, "settings.json does not list the new paddock.");
+
+        // It opens ready to be named. Only type once it really has the keyboard:
+        // keys sent to the desktop instead would open whatever icon is selected.
+        WaitUntil(() => Native.GetAncestor(Native.GetForegroundWindow(), Native.GA_ROOT) == created,
+            "the new paddock to take the keyboard for naming", TimeSpan.FromSeconds(3));
+
+        foreach (var key in "DRAWN")
+            Native.Press((byte)key);
+        Native.Press(Native.VK_RETURN);
+
+        WaitUntil(() => string.Equals(Native.TitleOf(created), "drawn", StringComparison.OrdinalIgnoreCase),
+            "the new paddock to take the typed name", onTimeout: () => $"it is titled \"{Native.TitleOf(created)}\"");
+        Screenshot("created");
+    }
+
+    private void ClickingElsewhereWithdrawsOffer()
+    {
+        var start = BareSpot(560, 460);
+        var end = new Point(820, 640);
+        var before = PaddockCount();
+
+        Native.Drag(start, end, rightButton: true);
+        WaitFor(() => FindMenuItem("Create paddock here"), "the 'Create paddock here' menu", TimeSpan.FromSeconds(5));
+
+        Native.Click(BareSpot(300, 620));
+
+        WaitUntil(() => FindMenuItem("Create paddock here") is null, "the offer to be withdrawn");
+        Thread.Sleep(800);
+        Check(PaddockCount() == before, "A paddock was created anyway.");
+    }
+
     private void LogHasNoErrors()
     {
         Check(File.Exists(LogFile), "No paddock.log was written.");
@@ -390,6 +476,25 @@ internal sealed class SmokeTest
 
         var bounds = item.Current.BoundingRectangle;
         return new Point((int)(bounds.Left + bounds.Width / 2), (int)(bounds.Top + bounds.Height / 3));
+    }
+
+    private int PaddockCount()
+        => JsonNode.Parse(File.ReadAllText(SettingsFile))?["corrals"]?["default"]?["paddocks"]?.AsArray().Count ?? 0;
+
+    private IntPtr FindAppWindow(string title)
+        => _app is null || _app.HasExited
+            ? IntPtr.Zero
+            : Native.TopLevelWindows().FirstOrDefault(hwnd =>
+                Native.ProcessOf(hwnd) == (uint)_app.Id && Native.IsWindowVisible(hwnd) && Native.TitleOf(hwnd) == title);
+
+    /// <summary>A point of bare desktop: the icon view itself, with no icon or window over it.</summary>
+    private static Point BareSpot(int x, int y)
+    {
+        var point = new Point(x, y);
+        var hit = Native.WindowFromPoint(new Native.POINT { X = x, Y = y });
+        Check(Native.ClassOf(hit) == "SysListView32", $"{point} is not bare desktop ({Describe(Native.RootWindowAt(point))}).");
+        Check(!DesktopIcons().Any(i => i.Current.BoundingRectangle.Contains(x, y)), $"{point} is on a desktop icon.");
+        return point;
     }
 
     private string? PaddockSetting(string name)

@@ -226,6 +226,189 @@ internal static partial class NativeMethods
         [PreserveSig] int GetIcon(int i, int flags, out IntPtr picon);
     }
 
+    // -- Low-level mouse hook (desktop right-drag) --
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct POINT
+    {
+        internal int X;
+        internal int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MSLLHOOKSTRUCT
+    {
+        internal POINT pt;
+        internal uint mouseData;
+        internal uint flags;
+        internal uint time;
+        internal IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MSG
+    {
+        internal IntPtr hwnd;
+        internal uint message;
+        internal IntPtr wParam;
+        internal IntPtr lParam;
+        internal uint time;
+        internal POINT pt;
+    }
+
+    internal delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    internal const int WH_MOUSE_LL = 14;
+    internal const int WM_QUIT = 0x0012;
+    internal const int WM_MOUSEMOVE = 0x0200;
+    internal const int WM_LBUTTONDOWN = 0x0201;
+    internal const int WM_RBUTTONDOWN = 0x0204;
+    internal const int WM_RBUTTONUP = 0x0205;
+    internal const int WM_MBUTTONDOWN = 0x0207;
+    internal const int WM_XBUTTONDOWN = 0x020B;
+    internal const uint WM_APP = 0x8000;
+    internal const uint PM_NOREMOVE = 0x0000;
+    internal const int SM_CXDRAG = 68;
+    internal const uint GA_ROOT = 2;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern IntPtr SetWindowsHookExW(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool UnhookWindowsHookEx(IntPtr hhk);
+
+    [LibraryImport("user32.dll")]
+    internal static partial IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+    [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial IntPtr GetModuleHandleW(string? lpModuleName);
+
+    [LibraryImport("kernel32.dll")]
+    internal static partial uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    internal static extern int GetMessageW(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool PeekMessageW(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax, uint wRemoveMsg);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool TranslateMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    internal static extern IntPtr DispatchMessageW(ref MSG lpMsg);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool PostThreadMessageW(uint idThread, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [LibraryImport("user32.dll")]
+    internal static partial int GetSystemMetrics(int nIndex);
+
+    [LibraryImport("user32.dll")]
+    internal static partial IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
+
+    /// <summary>DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: physical pixels, like the hook's coordinates.</summary>
+    internal static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = new(-4);
+
+    [DllImport("user32.dll")]
+    internal static extern IntPtr WindowFromPoint(POINT point);
+
+    [LibraryImport("user32.dll")]
+    internal static partial IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
+
+    [LibraryImport("user32.dll")]
+    internal static partial IntPtr GetParent(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ScreenToClient(IntPtr hwnd, ref POINT point);
+
+    [LibraryImport("user32.dll")]
+    internal static partial uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool SetForegroundWindow(IntPtr hwnd);
+
+    // -- Synthesized input (replaying a right-click to Explorer) --
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MOUSEINPUT
+    {
+        internal int dx;
+        internal int dy;
+        internal uint mouseData;
+        internal uint dwFlags;
+        internal uint time;
+        internal IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct INPUT
+    {
+        internal uint type;
+        internal MOUSEINPUT mi;
+    }
+
+    internal const uint INPUT_MOUSE = 0;
+    internal const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
+    internal const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    // -- Reading Explorer's desktop list view from outside its process --
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct LVHITTESTINFO
+    {
+        internal POINT pt;
+        internal uint flags;
+        internal int iItem;
+        internal int iSubItem;
+        internal int iGroup;
+    }
+
+    internal const uint LVM_HITTEST = 0x1000 + 18;
+    internal const uint SMTO_ABORTIFHUNG = 0x0002;
+    internal const uint PROCESS_VM_OPERATION = 0x0008;
+    internal const uint PROCESS_VM_READ = 0x0010;
+    internal const uint PROCESS_VM_WRITE = 0x0020;
+    internal const uint MEM_COMMIT = 0x1000;
+    internal const uint MEM_RESERVE = 0x2000;
+    internal const uint MEM_RELEASE = 0x8000;
+    internal const uint PAGE_READWRITE = 0x04;
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    internal static partial IntPtr OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint processId);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool CloseHandle(IntPtr handle);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    internal static partial IntPtr VirtualAllocEx(IntPtr process, IntPtr address, nuint size, uint allocationType, uint protect);
+
+    [LibraryImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool VirtualFreeEx(IntPtr process, IntPtr address, nuint size, uint freeType);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool WriteProcessMemory(IntPtr process, IntPtr address, ref LVHITTESTINFO buffer, nuint size, out nuint written);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern IntPtr SendMessageTimeoutW(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+
+    // -- Click-through overlay windows --
+
+    internal const int WS_EX_TRANSPARENT = 0x00000020;
+    internal const int WS_EX_NOACTIVATE = 0x08000000;
+
     // -- Shell change notification --
 
     internal const int SHCNE_UPDATEDIR = 0x00001000;

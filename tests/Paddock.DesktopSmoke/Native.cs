@@ -55,6 +55,8 @@ internal static class Native
     private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
 
     internal const byte VK_CONTROL = 0x11;
+    internal const byte VK_RETURN = 0x0D;
+    internal const byte VK_ESCAPE = 0x1B;
     internal const byte VK_LWIN = 0x5B;
     private const uint KEYEVENTF_KEYUP = 0x0002;
 
@@ -192,11 +194,15 @@ internal static class Native
     /// target in small steps (OLE drag-and-drop tracks real mouse movement),
     /// linger so the target sees DragOver, release.
     /// </summary>
-    internal static void Drag(Point from, Point to)
+    internal static void Drag(Point from, Point to, bool rightButton = false)
     {
+        var down = rightButton ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_LEFTDOWN;
+        var up = rightButton ? MOUSEEVENTF_RIGHTUP : MOUSEEVENTF_LEFTUP;
+        const uint at = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+
         MoveTo(from);
         Thread.Sleep(200);
-        LeftDown(from);
+        Mouse(down | at, from);
         Thread.Sleep(200);
 
         for (var i = 1; i <= 4; i++)
@@ -220,7 +226,7 @@ internal static class Native
             Thread.Sleep(80);
         }
 
-        LeftUp(to);
+        Mouse(up | at, to);
         Thread.Sleep(500);
     }
 
@@ -251,6 +257,14 @@ internal static class Native
     internal static void KeyDown(byte vk) => keybd_event(vk, 0, 0, IntPtr.Zero);
 
     internal static void KeyUp(byte vk) => keybd_event(vk, 0, KEYEVENTF_KEYUP, IntPtr.Zero);
+
+    internal static void Press(byte key)
+    {
+        KeyDown(key);
+        Thread.Sleep(30);
+        KeyUp(key);
+        Thread.Sleep(30);
+    }
 
     internal static void Chord(byte modifier, byte key)
     {

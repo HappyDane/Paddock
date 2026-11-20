@@ -101,6 +101,24 @@
 
                     <Rectangle Height="0.5" Fill="{DynamicResource Separator}" Margin="-16,0" />
 
+                    <Grid Height="52">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Draw on Desktop"
+                                       FontFamily="Segoe UI Variable, Segoe UI"
+                                       FontSize="14"
+                                       Foreground="{DynamicResource TextPrimary}" />
+                            <TextBlock Text="Right-drag on empty desktop to create a paddock"
+                                       FontFamily="Segoe UI Variable, Segoe UI"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource TextSecondary}" />
+                        </StackPanel>
+                        <CheckBox HorizontalAlignment="Right"
+                                  VerticalAlignment="Center"
+                                  IsChecked="{Binding DrawOnDesktop}" />
+                    </Grid>
+
+                    <Rectangle Height="0.5" Fill="{DynamicResource Separator}" Margin="-16,0" />
+
                     <Grid Height="44">
                         <TextBlock Text="Snap to Edges"
                                    FontFamily="Segoe UI Variable, Segoe UI"

@@ -88,7 +88,14 @@ public partial class PaddockControl : UserControl
                 () =>
                 {
                     // The window has to be active for the box to take keystrokes.
-                    HostWindow?.Activate();
+                    // If Windows will not hand Paddock the foreground, leave the
+                    // title as it is rather than show a box nobody can type in.
+                    if (HostWindow?.Activate() == false)
+                    {
+                        ViewModel.CancelRename();
+                        return;
+                    }
+
                     RenameBox.Focus();
                     Keyboard.Focus(RenameBox);
                     RenameBox.SelectAll();

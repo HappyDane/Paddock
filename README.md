@@ -8,7 +8,7 @@ Create styled zones on your desktop to group and organize icons. Clean, minimal,
 
 ## Features
 
-**Zones** — Create resizable zones ("paddocks") to group your desktop icons. Drag the title strip to move, drag the bottom-right grip to resize, right-click to configure.
+**Zones** — Create resizable zones ("paddocks") to group your desktop icons. Hold the right mouse button on an empty part of the desktop, drag out an area and choose **Create paddock here** — then just type its name. (Or use the tray icon → **New Paddock...**.) Drag the title strip to move, drag the bottom-right grip to resize, right-click to configure.
 
 **Styling** — Per-zone transparency, background color, and corner radius. Apple-inspired dark and light themes with a hairline edge and hover-reveal controls. Transparency applies to the panel, so icons and labels stay crisp on top of it.
 
@@ -67,7 +67,7 @@ drop into a zone's folder from Explorer shows up in the zone.
 
 ### Getting icons into a zone
 
-Draw a zone on an empty part of the desktop, then either drag icons in, or use
+Right-drag a zone on an empty part of the desktop, then either drag icons in, or use
 the zone's right-click menu → **Fill from Desktop**, which can move everything
 or just one kind of thing: shortcuts, folders, documents, images, media,
 archives, or everything else. The count is always confirmed before anything
@@ -84,8 +84,9 @@ install needed). Open the latest successful run of the
 [**windows** workflow](https://github.com/HappyDane/Paddock/actions/workflows/windows.yml),
 download the **Paddock-win-x64** artifact, unzip it and run `Paddock.exe`.
 Windows SmartScreen may warn about an unsigned app the first time: *More info →
-Run anyway*. Then right-click the tray icon → **New Paddock...** and drag out an
-area on the desktop.
+Run anyway*. Then hold the right mouse button on an empty part of the desktop,
+drag out an area and pick **Create paddock here** (or use the tray icon →
+**New Paddock...**).
 
 The same run also contains `desktop-smoke-*` artifacts: screenshots of the
 end-to-end test driving that exact exe on Windows Server 2022 and 2025.
@@ -134,6 +135,7 @@ if you ever need to see what the app thought it was doing. Settings include:
 - Theme (dark/light)
 - Default opacity and corner radius for new zones
 - Quick Hide toggle and hotkey
+- Draw on Desktop (right-drag to create a zone; on by default)
 - Snap-to-edge and intelligent spacing
 - Roll-up expand mode (click/hover)
 - Layout profiles (corrals)
