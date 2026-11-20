@@ -31,6 +31,16 @@ static class Probe
         Say($"desktop: {Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory)}");
         Say($"shell window: {Describe(N.GetShellWindow())}  defview host: {Describe(FindDefViewHost())}");
         Say($"foreground: {Describe(N.GetForegroundWindow())}");
+        foreach (var w in TopLevel())
+        {
+            var cls = N.ClassOf(w);
+            if (N.IsWindowVisible(w) && cls is "CASCADIA_HOSTING_WINDOW_CLASS" or "ConsoleWindowClass")
+            {
+                N.ShowWindow(w, 6); // SW_MINIMIZE
+                Say($"minimised {Describe(w)}");
+            }
+        }
+        Pump(800);
         DumpZOrder("initial");
         Shot("0-initial");
 
@@ -43,6 +53,9 @@ static class Probe
             f.Show();
             x += 230;
         }
+        var repin = new System.Windows.Forms.Timer { Interval = 1000 };
+        repin.Tick += (_, _) => { foreach (var f in Forms) f.Reapply(); };
+        repin.Start();
         Pump(1500);
         DumpZOrder("after showing test windows");
         Report("on bare desktop");
@@ -76,13 +89,20 @@ static class Probe
         app.Hide();
         Pump(300);
         Keys2(N.VK_LWIN, (byte)'D');
+        Pump(400);
+        Report("0.4s after Win+D");
         Pump(2000);
-        Report("after Win+D");
+        Report("2.4s after Win+D (re-pin timer has run)");
         DumpZOrder("after Win+D");
         Shot("4-win-d");
         Keys2(N.VK_LWIN, (byte)'D');
         Pump(1500);
         Report("after Win+D again");
+        app.Show(); app.Activate();
+        Pump(1500);
+        Report("app window shown again after Win+D cycle");
+        Shot("4b-app-again");
+        app.Hide();
 
         // What wallpaper engines (and slideshow transitions) do: ask Progman to
         // spawn a WorkerW behind the icons.
@@ -108,8 +128,27 @@ static class Probe
         {
             var top = Hit(f.PointToScreen(new Point(100, 30)));
             var bottom = Hit(f.PointToScreen(new Point(100, 130)));
-            Say($"  {f.Strategy,-13} top-half hit: {top,-40} bottom-half hit: {bottom}");
+            Say($"  {f.Strategy,-13} top: {Pixel(f, 30)} {top,-40} | bottom: {Pixel(f, 130)} {bottom}");
         }
+    }
+
+    static string Pixel(TestForm f, int y)
+    {
+        try
+        {
+            var p = f.PointToScreen(new Point(150, y));
+            using var bmp = new Bitmap(1, 1);
+            using (var g = Graphics.FromImage(bmp)) g.CopyFromScreen(p, Point.Empty, new Size(1, 1));
+            var c = bmp.GetPixel(0, 0);
+            return c.ToArgb() == f.BackColor.ToArgb() ? "[SEEN]" : $"[hidden {c.R:X2}{c.G:X2}{c.B:X2}]";
+        }
+        catch (Exception ex) { return "[pixel? " + ex.Message + "]"; }
+    }
+
+    static IEnumerable<IntPtr> TopLevel()
+    {
+        var h = N.GetTopWindow(IntPtr.Zero);
+        while (h != IntPtr.Zero) { yield return h; h = N.GetWindow(h, 2); }
     }
 
     static string Hit(Point p)
@@ -170,6 +209,16 @@ static class Probe
             using var bmp = new Bitmap(b.Width, b.Height);
             using (var g = Graphics.FromImage(bmp)) g.CopyFromScreen(b.Location, Point.Empty, b.Size);
             bmp.Save(Path.Combine(OutDir, name + ".png"), ImageFormat.Png);
+            using var small = new Bitmap(bmp, new Size(b.Width / 2, b.Height / 2));
+            using var ms = new MemoryStream();
+            var codec = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
+            var ep = new EncoderParameters(1);
+            ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 55L);
+            small.Save(ms, codec, ep);
+            var b64 = Convert.ToBase64String(ms.ToArray());
+            for (var i = 0; i < b64.Length; i += 8000)
+                File.AppendAllText(Path.Combine(OutDir, "images.txt"), $"IMG {name} {i / 8000} {b64.Substring(i, Math.Min(8000, b64.Length - i))}\n");
+            File.AppendAllText(Path.Combine(OutDir, "images.txt"), $"IMG {name} END\n");
         }
         catch (Exception ex) { Say($"screenshot {name} failed: {ex.Message}"); }
     }
@@ -223,14 +272,18 @@ sealed class TestForm : Form
 
     protected override CreateParams CreateParams
     {
-        get { var cp = base.CreateParams; cp.ExStyle |= 0x80; return cp; } // WS_EX_TOOLWINDOW
+        get
+        {
+            var cp = base.CreateParams;
+            cp.ExStyle |= 0x80; // WS_EX_TOOLWINDOW
+            if (Strategy == "OwnerProgman") cp.Parent = N.GetShellWindow(); // owner, not parent: no WS_CHILD
+            return cp;
+        }
     }
 
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        if (Strategy == "OwnerProgman")
-            N.SetWindowLongPtrW(Handle, -8, N.GetShellWindow()); // GWL_HWNDPARENT = owner
         Reapply();
     }
 
@@ -298,6 +351,7 @@ static class N
     [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint f);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint f, int dx, int dy, uint d, IntPtr e);
     [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint f, IntPtr e);

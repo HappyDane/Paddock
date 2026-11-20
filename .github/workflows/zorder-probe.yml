@@ -24,6 +24,10 @@ jobs:
           $p = Start-Process -FilePath probe-bin/ZOrderProbe.exe -ArgumentList "$PWD/probe-out" -PassThru
           if (-not $p.WaitForExit(120000)) { $p.Kill(); "probe timed out" }
           Get-Content probe-out/probe.txt
+      - name: Screenshots (base64)
+        if: always()
+        shell: pwsh
+        run: Get-Content probe-out/images.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
