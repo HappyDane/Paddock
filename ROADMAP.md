@@ -32,6 +32,9 @@ The foundation. Everything needed to replace a cluttered desktop with organized 
 - [x] Background icon loading, batched settings writes, cached monitor geometry
 - [x] Single-instance guard, crash logging to %AppData%/Paddock/paddock.log
 - [x] Corrupt settings.json is preserved rather than silently discarded
+- [x] Paddocks stay visible through Show Desktop (Win+D) and below apps when clicked
+- [x] All-users desktop shortcuts can be grouped (one permission prompt per drop)
+- [x] Windows CI: downloadable single-file exe + end-to-end desktop smoke test
 
 ### TODO
 - [ ] Collect the icons that were sitting underneath a newly drawn paddock
