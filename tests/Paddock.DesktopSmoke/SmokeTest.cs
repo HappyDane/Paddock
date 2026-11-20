@@ -345,13 +345,12 @@ internal sealed class SmokeTest
         Screenshot("desktop-menu");
         Check(FindMenuItem("Create paddock here") is null, "Paddock offered a paddock for a plain right-click.");
 
-        for (var i = 0; i < 3 && Native.IsWindowVisible(menu); i++)
-        {
-            Native.Press(Native.VK_ESCAPE);
-            Thread.Sleep(400);
-        }
-
-        Check(!Native.IsWindowVisible(menu), "Explorer's desktop menu did not close.");
+        // Close it again. (Windows 11's menu lives in a XAML host window that can
+        // stay "visible" once the menu itself is gone, so this is best effort.)
+        Native.Press(Native.VK_ESCAPE);
+        Thread.Sleep(400);
+        Native.Click(BareSpot(300, 620));
+        Thread.Sleep(400);
     }
 
     private void RightDragCreatesPaddock()
@@ -363,7 +362,9 @@ internal sealed class SmokeTest
 
         Native.Drag(start, end, rightButton: true);
 
-        var item = WaitFor(() => FindMenuItem("Create paddock here"), "the 'Create paddock here' menu", TimeSpan.FromSeconds(5));
+        WaitUntil(() => FindMenuItem("Create paddock here") is not null, "the 'Create paddock here' menu",
+            TimeSpan.FromSeconds(5), onTimeout: DescribeAppWindows);
+        var item = FindMenuItem("Create paddock here")!;
         Screenshot("create-offer");
 
         var bounds = item.Current.BoundingRectangle;
@@ -395,12 +396,14 @@ internal sealed class SmokeTest
 
     private void ClickingElsewhereWithdrawsOffer()
     {
+        MinimiseOtherWindows();
         var start = BareSpot(560, 460);
         var end = new Point(820, 640);
         var before = PaddockCount();
 
         Native.Drag(start, end, rightButton: true);
-        WaitFor(() => FindMenuItem("Create paddock here"), "the 'Create paddock here' menu", TimeSpan.FromSeconds(5));
+        WaitUntil(() => FindMenuItem("Create paddock here") is not null, "the 'Create paddock here' menu",
+            TimeSpan.FromSeconds(5), onTimeout: DescribeAppWindows);
 
         Native.Click(BareSpot(300, 620));
 
@@ -476,6 +479,24 @@ internal sealed class SmokeTest
 
         var bounds = item.Current.BoundingRectangle;
         return new Point((int)(bounds.Left + bounds.Width / 2), (int)(bounds.Top + bounds.Height / 3));
+    }
+
+    /// <summary>Paddock's visible windows, for a failure message.</summary>
+    private string DescribeAppWindows()
+    {
+        if (_app is null || _app.HasExited)
+            return "Paddock is not running";
+
+        var windows = Native.TopLevelWindows()
+            .Where(h => Native.ProcessOf(h) == (uint)_app.Id && Native.IsWindowVisible(h))
+            .Select(h =>
+            {
+                Native.GetWindowRect(h, out var r);
+                return $"{Native.ClassOf(h)} \"{Native.TitleOf(h)}\" {r}";
+            });
+
+        return "Paddock's visible windows: " + string.Join("; ", windows)
+               + $". Foreground: {Describe(Native.GetForegroundWindow())}";
     }
 
     private int PaddockCount()

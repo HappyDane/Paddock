@@ -1,10 +1,10 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Interop;
 using Paddock.App.Helpers;
 using Paddock.App.Views;
 using Paddock.Core.Models;
+using Paddock.Core.Services;
 using Paddock.Shell;
 
 namespace Paddock.App.Services;
@@ -36,7 +36,11 @@ internal sealed class DesktopDrawController : IDisposable
 
         _gestures.DrawingChanged += OnDrawingChanged;
         _gestures.DrawCompleted += bounds => _app.Dispatcher.BeginInvoke(() => OfferToCreate(ToDips(bounds)));
-        _gestures.DrawCancelled += () => _app.Dispatcher.BeginInvoke(HideOutlineUnlessOffering);
+        _gestures.DrawCancelled += () => _app.Dispatcher.BeginInvoke(() =>
+        {
+            Log.Info("Desktop right-drag cancelled.");
+            HideOutlineUnlessOffering();
+        });
         _gestures.ButtonPressed += (x, y) => _app.Dispatcher.BeginInvoke(() => DismissIfOutside(x, y));
     }
 
@@ -93,6 +97,8 @@ internal sealed class DesktopDrawController : IDisposable
         CloseMenu();
 
         var cursor = ScreenHelper.GetCursorPosition();
+        Log.Info($"Desktop right-drag drew {area.X:0},{area.Y:0} {area.Width:0}x{area.Height:0}: " +
+                 $"offering a paddock (menu at {cursor.X:0},{cursor.Y:0}).");
 
         var create = new MenuItem { Header = "Create paddock here", FontWeight = FontWeights.SemiBold };
         create.Click += (_, _) => _app.Host?.CreatePaddock(area, beginRename: true);
@@ -114,16 +120,16 @@ internal sealed class DesktopDrawController : IDisposable
             if (ReferenceEquals(_menu, menu))
                 _menu = null;
 
+            Log.Info("Paddock offer closed.");
             HideOutline();
         };
 
+        // No SetForegroundWindow here: when Paddock is already active the popup
+        // holds mouse capture, and changing activation would make it lose
+        // capture and close at once. A click elsewhere is caught by the mouse
+        // hook instead (DismissIfOutside), active or not.
         _menu = menu;
         menu.IsOpen = true;
-
-        // With the foreground, a click elsewhere closes the menu the usual way.
-        // Windows may refuse it to a background app; DismissIfOutside covers that.
-        if (PresentationSource.FromVisual(menu) is HwndSource source)
-            WindowStyles.TryBringToForeground(source.Handle);
     }
 
     /// <summary>A click anywhere outside the open menu withdraws the offer.</summary>
@@ -138,7 +144,10 @@ internal sealed class DesktopDrawController : IDisposable
         var bounds = new Rect(topLeft.X, topLeft.Y, menu.ActualWidth * scale, menu.ActualHeight * scale);
 
         if (!bounds.Contains(x, y))
+        {
+            Log.Info("Paddock offer withdrawn: the user clicked elsewhere.");
             CloseMenu();
+        }
     }
 
     private void CloseMenu()

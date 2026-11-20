@@ -22,11 +22,4 @@ public static class WindowStyles
                      | NativeMethods.WS_EX_NOACTIVATE
                      | NativeMethods.WS_EX_TOOLWINDOW));
     }
-
-    /// <summary>
-    /// Asks for the foreground so a popup Paddock opened (a menu, say) closes
-    /// when the user clicks elsewhere. Windows may refuse; callers must cope.
-    /// </summary>
-    public static bool TryBringToForeground(IntPtr windowHandle)
-        => windowHandle != IntPtr.Zero && NativeMethods.SetForegroundWindow(windowHandle);
 }

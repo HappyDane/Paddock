@@ -330,10 +330,6 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll")]
     internal static partial uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
 
-    [LibraryImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool SetForegroundWindow(IntPtr hwnd);
-
     // -- Synthesized input (replaying a right-click to Explorer) --
 
     [StructLayout(LayoutKind.Sequential)]
