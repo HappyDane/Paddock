@@ -345,6 +345,10 @@ public class PaddockViewModel : INotifyPropertyChanged
     /// </summary>
     public string? ApplyDrop(DropRequest request)
     {
+        Log.Info(request.Icon is { } dragged
+            ? $"Drop onto \"{Title}\": an icon from paddock {dragged.SourcePaddockId}."
+            : $"Drop onto \"{Title}\": {request.Files.Count} item(s).");
+
         if (request.Icon is { } icon)
         {
             _manager.MoveIconBetweenPaddocks(icon.SourcePaddockId, Id, icon.DesktopPath);

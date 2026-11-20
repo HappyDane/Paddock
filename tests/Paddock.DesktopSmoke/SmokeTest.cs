@@ -32,7 +32,6 @@ internal sealed class SmokeTest
     private Process? _app;
     private IntPtr _paddock;
     private int _shot;
-    private bool _sharedItemInPaddock;
 
     internal SmokeTest(string exe, string output)
     {
@@ -160,15 +159,18 @@ internal sealed class SmokeTest
 
     private void DragTwoIconsIn()
     {
-        var bravo = DesktopIconCentre("Smoke Bravo");
-        var charlie = DesktopIconCentre("Smoke Charlie");
+        // Select both the way Explorer exposes it to assistive technology;
+        // Ctrl+click timing differs between Explorer versions, and what is under
+        // test here is Paddock taking a multi-item drop, not Explorer's selection.
+        var bravo = DesktopIcon("Smoke Bravo") ?? throw new SmokeFailure("'Smoke Bravo' is not on the desktop.");
+        var charlie = DesktopIcon("Smoke Charlie") ?? throw new SmokeFailure("'Smoke Charlie' is not on the desktop.");
 
-        Native.Click(bravo);
-        Native.KeyDown(Native.VK_CONTROL);
-        Native.Click(charlie);
-        Native.KeyUp(Native.VK_CONTROL);
+        ((SelectionItemPattern)bravo.GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
+        ((SelectionItemPattern)charlie.GetCurrentPattern(SelectionItemPattern.Pattern)).AddToSelection();
+        Thread.Sleep(300);
+        Check(IsSelected(bravo) && IsSelected(charlie), "Could not select both desktop icons.");
 
-        Native.Drag(charlie, PaddockDropPoint);
+        Native.Drag(DesktopIconCentre("Smoke Charlie"), PaddockDropPoint);
         ExpectInPaddock("Smoke Bravo.txt");
         ExpectInPaddock("Smoke Charlie.txt");
     }
@@ -176,27 +178,27 @@ internal sealed class SmokeTest
     private void SortBySize()
     {
         InvokeMenu("Sort By", "File Size");
-        ExpectOrder("Smoke Bravo", "Smoke Charlie", "Smoke Alpha");
+        ExpectOrderOfPresent("Smoke Bravo", "Smoke Charlie", "Smoke Alpha");
         Check(PaddockSetting("sortBy") == "fileSize", $"settings.json says sortBy={PaddockSetting("sortBy")}.");
     }
 
     private void SortByDate()
     {
         InvokeMenu("Sort By", "Date Modified");
-        ExpectOrder("Smoke Alpha", "Smoke Charlie", "Smoke Bravo");
+        ExpectOrderOfPresent("Smoke Alpha", "Smoke Charlie", "Smoke Bravo");
     }
 
     private void ToggleAscending()
     {
         InvokeMenu("Sort By", "Name");
-        ExpectOrder("Smoke Alpha", "Smoke Bravo", "Smoke Charlie");
+        ExpectOrderOfPresent("Smoke Alpha", "Smoke Bravo", "Smoke Charlie");
 
         InvokeMenu("Sort By", "Ascending");
-        ExpectOrder("Smoke Charlie", "Smoke Bravo", "Smoke Alpha");
+        ExpectOrderOfPresent("Smoke Charlie", "Smoke Bravo", "Smoke Alpha");
         Check(PaddockSetting("sortAscending") == "false", "settings.json still says ascending.");
 
         InvokeMenu("Sort By", "Ascending");
-        ExpectOrder("Smoke Alpha", "Smoke Bravo", "Smoke Charlie");
+        ExpectOrderOfPresent("Smoke Alpha", "Smoke Bravo", "Smoke Charlie");
     }
 
     private void ClickStaysBelowApps()
@@ -252,9 +254,9 @@ internal sealed class SmokeTest
 
     private void DragIconOut()
     {
-        var target = new Point(PaddockRect.Left - 180, PaddockRect.Top + 260);
-        Check(Native.ClassOf(Native.WindowFromPoint(new Native.POINT { X = target.X, Y = target.Y })) == "SysListView32",
-            $"The drop target {target} is not bare desktop ({Describe(Native.RootWindowAt(target))}).");
+        MinimiseOtherWindows();
+        var target = BareDesktopPoint();
+        Info($"Dropping on bare desktop at {target}.");
 
         Native.Drag(PaddockItemCentre("Smoke Alpha"), target);
 
@@ -293,39 +295,34 @@ internal sealed class SmokeTest
         WaitUntil(() => File.Exists(Path.Combine(PaddockFolder, "Smoke Shared.txt")) && !File.Exists(shared),
             "the all-users desktop item to move into the paddock", TimeSpan.FromSeconds(20));
         WaitUntil(() => PaddockItems().Contains("Smoke Shared"), "'Smoke Shared' to show in the paddock");
-        _sharedItemInPaddock = true;
     }
 
     private void Restart()
     {
+        var before = PaddockItems();
+        Check(before.Count > 0, "Nothing in the paddock to carry across a restart.");
+
         _app!.Kill();
         _app.WaitForExit(5000);
         WaitUntil(() => FindPaddockWindow() == IntPtr.Zero, "the paddock window to close");
 
-        var expected = new List<string> { "Smoke Bravo", "Smoke Charlie" };
-        if (_sharedItemInPaddock)
-            expected.Add("Smoke Shared");
-
-        foreach (var name in expected)
+        foreach (var name in before)
             Check(File.Exists(Path.Combine(PaddockFolder, name + ".txt")), $"{name} is no longer in the paddock folder.");
 
         StartApp();
-        ExpectOrder(expected.ToArray());
+        ExpectOrder(before.ToArray());
     }
 
     private void RemovePaddock()
     {
+        var inside = Directory.EnumerateFiles(PaddockFolder).Select(Path.GetFileName).ToList();
+        Check(inside.Count > 0, "Nothing in the paddock to return.");
+
         InvokeMenu("Remove Paddock (icons return to desktop)");
         WaitUntil(() => FindPaddockWindow() == IntPtr.Zero, "the paddock window to close");
 
-        foreach (var name in new[] { "Smoke Bravo.txt", "Smoke Charlie.txt" })
-            WaitUntil(() => File.Exists(Path.Combine(_desktop, name)), $"'{name}' to return to the desktop");
-
-        if (_sharedItemInPaddock)
-        {
-            WaitUntil(() => File.Exists(Path.Combine(_desktop, "Smoke Shared.txt")),
-                "the formerly all-users item to land on the user's desktop");
-        }
+        foreach (var name in inside)
+            WaitUntil(() => File.Exists(Path.Combine(_desktop, name!)), $"'{name}' to return to the desktop");
 
         Check(!Directory.Exists(PaddockFolder), "The paddock's folder was left behind.");
         Check(JsonNode.Parse(File.ReadAllText(SettingsFile))?["corrals"]?["default"]?["paddocks"]?.AsArray().Count == 0,
@@ -468,6 +465,49 @@ internal sealed class SmokeTest
             $"the paddock to show [{string.Join(", ", names)}]", onTimeout: () => $"it shows [{string.Join(", ", shown)}]");
     }
 
+    /// <summary>
+    /// Like <see cref="ExpectOrder"/>, limited to the items that really are in
+    /// the paddock — so a sort is still checked when an earlier step failed to
+    /// bring one of them in.
+    /// </summary>
+    private void ExpectOrderOfPresent(params string[] names)
+    {
+        var present = names.Where(n => File.Exists(Path.Combine(PaddockFolder, n + ".txt"))).ToArray();
+        Check(present.Length >= 2, $"Only {present.Length} test icon(s) in the paddock: nothing to sort.");
+        ExpectOrder(present);
+    }
+
+    private static bool IsSelected(AutomationElement item)
+        => ((SelectionItemPattern)item.GetCurrentPattern(SelectionItemPattern.Pattern)).Current.IsSelected;
+
+    /// <summary>
+    /// A point where a drop lands on the bare desktop: the icon view itself,
+    /// not an icon, a window, or the paddock.
+    /// </summary>
+    private Point BareDesktopPoint()
+    {
+        var icons = DesktopIcons().Select(i => i.Current.BoundingRectangle).ToList();
+        var paddock = PaddockRect;
+
+        for (var y = 140; y < 640; y += 40)
+        {
+            for (var x = 520; x >= 160; x -= 40)
+            {
+                var point = new Point(x, y);
+                var hit = Native.WindowFromPoint(new Native.POINT { X = x, Y = y });
+
+                if (Native.ClassOf(hit) == "SysListView32"
+                    && !icons.Any(r => r.Contains(x, y))
+                    && (x < paddock.Left - 40 || x > paddock.Right + 40 || y > paddock.Bottom + 40))
+                {
+                    return point;
+                }
+            }
+        }
+
+        throw new SmokeFailure("Found no bare desktop to drop on.");
+    }
+
     private void ExpectInPaddock(string fileName)
         => WaitUntil(() => File.Exists(Path.Combine(PaddockFolder, fileName)) && !File.Exists(Path.Combine(_desktop, fileName)),
             $"'{fileName}' to move off the desktop into the paddock folder");
@@ -481,21 +521,24 @@ internal sealed class SmokeTest
     // --- Desktop ---
 
     private static AutomationElement? DesktopIcon(string name)
+        => DesktopIcons().FirstOrDefault(e => e.Current.Name.StartsWith(name, StringComparison.OrdinalIgnoreCase));
+
+    private static List<AutomationElement> DesktopIcons()
     {
         var list = DesktopListView();
         if (list == IntPtr.Zero)
-            return null;
+            return [];
 
         try
         {
             return AutomationElement.FromHandle(list)
                 .FindAll(TreeScope.Children, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ListItem))
                 .Cast<AutomationElement>()
-                .FirstOrDefault(e => e.Current.Name.StartsWith(name, StringComparison.OrdinalIgnoreCase));
+                .ToList();
         }
         catch (ElementNotAvailableException)
         {
-            return null;
+            return [];
         }
     }
 
@@ -544,6 +587,30 @@ internal sealed class SmokeTest
         {
             // Not writable here; the shared-desktop step will say so.
         }
+    }
+
+    /// <summary>
+    /// Anything else that could sit over the desktop — CI runner images leave
+    /// the odd dialog open — goes out of the way, if it can be minimised.
+    /// </summary>
+    private void MinimiseOtherWindows()
+    {
+        const long WS_MINIMIZEBOX = 0x00020000;
+        var mine = new HashSet<uint> { (uint)Environment.ProcessId, (uint)(_app?.Id ?? 0) };
+
+        foreach (var hwnd in Native.TopLevelWindows())
+        {
+            if (!Native.IsWindowVisible(hwnd) || mine.Contains(Native.ProcessOf(hwnd)))
+                continue;
+
+            if (Native.ClassOf(hwnd) is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd")
+                continue;
+
+            if ((Native.GetWindowStyle(hwnd) & WS_MINIMIZEBOX) != 0)
+                Native.ShowWindow(hwnd, Native.SW_MINIMIZE);
+        }
+
+        Thread.Sleep(500);
     }
 
     /// <summary>The runner's own console window covers most of the screen.</summary>

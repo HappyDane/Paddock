@@ -101,6 +101,11 @@ internal static class Native
     [DllImport("user32.dll")]
     internal static extern bool ShowWindow(IntPtr hwnd, int command);
 
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
+
+    internal static long GetWindowStyle(IntPtr hwnd) => (long)GetWindowLongPtr(hwnd, -16); // GWL_STYLE
+
     [DllImport("user32.dll")]
     internal static extern IntPtr GetShellWindow();
 
