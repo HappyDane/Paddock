@@ -58,7 +58,7 @@ internal sealed class SmokeTest
 
         Step("The paddock is visible on the desktop", PaddockIsVisible);
         Step("Dragging a desktop icon in moves it into the paddock", DragOneIconIn);
-        Step("Dragging two selected desktop icons in moves both", DragTwoIconsIn);
+        Step("Dropping two desktop files at once moves both", DragTwoIconsIn);
         Step("The paddock shows its icons sorted by name", () => ExpectOrder("Smoke Alpha", "Smoke Bravo", "Smoke Charlie"));
         Step("Sort By > File Size reorders the icons", SortBySize);
         Step("Sort By > Date Modified reorders the icons", SortByDate);
@@ -159,36 +159,15 @@ internal sealed class SmokeTest
 
     private void DragTwoIconsIn()
     {
-        // Select both by rubber-banding them on the desktop, as most people do.
-        // (Ctrl+click via synthesized input, and UI Automation's AddToSelection,
-        // both fail to multi-select on the Windows 11 24H2 desktop.) What is under
-        // test is Paddock taking a multi-item drop, not Explorer's selection.
-        var bravo = IconBounds("Smoke Bravo");
-        var charlie = IconBounds("Smoke Charlie");
-        var band = System.Windows.Rect.Union(bravo, charlie);
+        var files = new[] { Path.Combine(_desktop, "Smoke Bravo.txt"), Path.Combine(_desktop, "Smoke Charlie.txt") };
 
-        var others = DesktopIcons()
-            .Where(i => !i.Current.Name.StartsWith("Smoke Bravo", StringComparison.OrdinalIgnoreCase)
-                        && !i.Current.Name.StartsWith("Smoke Charlie", StringComparison.OrdinalIgnoreCase))
-            .Where(i => i.Current.BoundingRectangle.IntersectsWith(band))
-            .Select(i => i.Current.Name)
-            .ToList();
-        Check(others.Count == 0, $"Other icons sit between the two test icons: {string.Join(", ", others)}.");
+        // Placed on the left, clear of the paddock, below the desktop icon column.
+        using var source = new DragSourceWindow(files, new Rectangle(240, 470, 90, 90));
+        Native.Drag(source.Centre, PaddockDropPoint);
 
-        // From empty desktop just right of the icons to just inside the far corner.
-        var start = new Point((int)band.Right + 12, (int)band.Top + 6);
-        var end = new Point((int)band.Left + 12, (int)band.Bottom - 6);
-        Native.Click(new Point((int)band.Right + 60, (int)band.Bottom + 40)); // clear any selection
-        Native.Drag(start, end);
-        Thread.Sleep(300);
-
-        Native.Drag(DesktopIconCentre("Smoke Charlie"), PaddockDropPoint);
         ExpectInPaddock("Smoke Bravo.txt");
         ExpectInPaddock("Smoke Charlie.txt");
     }
-
-    private static System.Windows.Rect IconBounds(string name)
-        => (DesktopIcon(name) ?? throw new SmokeFailure($"'{name}' is not on the desktop.")).Current.BoundingRectangle;
 
     private void SortBySize()
     {
