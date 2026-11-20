@@ -159,21 +159,36 @@ internal sealed class SmokeTest
 
     private void DragTwoIconsIn()
     {
-        // Select both the way Explorer exposes it to assistive technology;
-        // Ctrl+click timing differs between Explorer versions, and what is under
-        // test here is Paddock taking a multi-item drop, not Explorer's selection.
-        var bravo = DesktopIcon("Smoke Bravo") ?? throw new SmokeFailure("'Smoke Bravo' is not on the desktop.");
-        var charlie = DesktopIcon("Smoke Charlie") ?? throw new SmokeFailure("'Smoke Charlie' is not on the desktop.");
+        // Select both by rubber-banding them on the desktop, as most people do.
+        // (Ctrl+click via synthesized input, and UI Automation's AddToSelection,
+        // both fail to multi-select on the Windows 11 24H2 desktop.) What is under
+        // test is Paddock taking a multi-item drop, not Explorer's selection.
+        var bravo = IconBounds("Smoke Bravo");
+        var charlie = IconBounds("Smoke Charlie");
+        var band = System.Windows.Rect.Union(bravo, charlie);
 
-        ((SelectionItemPattern)bravo.GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
-        ((SelectionItemPattern)charlie.GetCurrentPattern(SelectionItemPattern.Pattern)).AddToSelection();
+        var others = DesktopIcons()
+            .Where(i => !i.Current.Name.StartsWith("Smoke Bravo", StringComparison.OrdinalIgnoreCase)
+                        && !i.Current.Name.StartsWith("Smoke Charlie", StringComparison.OrdinalIgnoreCase))
+            .Where(i => i.Current.BoundingRectangle.IntersectsWith(band))
+            .Select(i => i.Current.Name)
+            .ToList();
+        Check(others.Count == 0, $"Other icons sit between the two test icons: {string.Join(", ", others)}.");
+
+        // From empty desktop just right of the icons to just inside the far corner.
+        var start = new Point((int)band.Right + 12, (int)band.Top + 6);
+        var end = new Point((int)band.Left + 12, (int)band.Bottom - 6);
+        Native.Click(new Point((int)band.Right + 60, (int)band.Bottom + 40)); // clear any selection
+        Native.Drag(start, end);
         Thread.Sleep(300);
-        Check(IsSelected(bravo) && IsSelected(charlie), "Could not select both desktop icons.");
 
         Native.Drag(DesktopIconCentre("Smoke Charlie"), PaddockDropPoint);
         ExpectInPaddock("Smoke Bravo.txt");
         ExpectInPaddock("Smoke Charlie.txt");
     }
+
+    private static System.Windows.Rect IconBounds(string name)
+        => (DesktopIcon(name) ?? throw new SmokeFailure($"'{name}' is not on the desktop.")).Current.BoundingRectangle;
 
     private void SortBySize()
     {
@@ -476,9 +491,6 @@ internal sealed class SmokeTest
         Check(present.Length >= 2, $"Only {present.Length} test icon(s) in the paddock: nothing to sort.");
         ExpectOrder(present);
     }
-
-    private static bool IsSelected(AutomationElement item)
-        => ((SelectionItemPattern)item.GetCurrentPattern(SelectionItemPattern.Pattern)).Current.IsSelected;
 
     /// <summary>
     /// A point where a drop lands on the bare desktop: the icon view itself,
