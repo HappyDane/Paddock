@@ -103,6 +103,12 @@ internal static class Native
     [DllImport("user32.dll")]
     internal static extern bool ShowWindow(IntPtr hwnd, int command);
 
+    [DllImport("user32.dll")]
+    private static extern bool PostMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    /// <summary>Asks a window to close, as its close button would.</summary>
+    internal static void Close(IntPtr hwnd) => PostMessageW(hwnd, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
+
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
 

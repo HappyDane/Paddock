@@ -207,12 +207,12 @@ internal sealed class SmokeTest
 
         var menuItem = WaitFor(() => FindMenuItem("Appearance…"), "the paddock menu", TimeSpan.FromSeconds(5));
         Thread.Sleep(300);
-        KeepImage("menu", MenuBounds());
+        KeepImage("menu", WindowAround(menuItem));
         ((InvokePattern)menuItem.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
 
         var blue = WaitFor(() => FindAppElement("Blue", ControlType.Button), "the Appearance panel", TimeSpan.FromSeconds(5));
         Thread.Sleep(300);
-        var panel = PanelBounds(blue);
+        var panel = WindowAround(blue);
         Info($"Appearance panel at {panel}.");
         KeepImage("appearance-default", panel);
 
@@ -627,27 +627,17 @@ internal sealed class SmokeTest
         Native.Click(new Point((int)(bounds.Left + bounds.Width / 2), (int)(bounds.Top + bounds.Height / 2)));
     }
 
-    /// <summary>The open context menu's window, for a picture of it.</summary>
-    private Rectangle MenuBounds()
+    /// <summary>
+    /// The window an element is drawn in (a menu or popover has its own),
+    /// found from a point inside the element.
+    /// </summary>
+    private static Rectangle WindowAround(AutomationElement inside)
     {
-        var menu = AutomationElement.RootElement.FindFirst(TreeScope.Children, new AndCondition(
-            new PropertyCondition(AutomationElement.ProcessIdProperty, _app!.Id),
-            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Menu)));
-        return menu is null ? Rectangle.Empty : ToRectangle(menu.Current.BoundingRectangle);
+        var b = inside.Current.BoundingRectangle;
+        var root = Native.RootWindowAt(new Point((int)(b.Left + b.Width / 2), (int)(b.Top + b.Height / 2)));
+        Native.GetWindowRect(root, out var r);
+        return new Rectangle(r.Left, r.Top, r.Width, r.Height);
     }
-
-    /// <summary>The Appearance panel's window, found from one of its swatches.</summary>
-    private static Rectangle PanelBounds(AutomationElement inside)
-    {
-        var walker = TreeWalker.ControlViewWalker;
-        var element = inside;
-        while (walker.GetParent(element) is { } parent && parent != AutomationElement.RootElement)
-            element = parent;
-        return ToRectangle(element.Current.BoundingRectangle);
-    }
-
-    private static Rectangle ToRectangle(System.Windows.Rect r)
-        => r.IsEmpty ? Rectangle.Empty : new Rectangle((int)r.Left, (int)r.Top, (int)r.Width, (int)r.Height);
 
     private static Rectangle Union(Native.RECT a, Rectangle b)
     {
@@ -918,6 +908,8 @@ internal sealed class SmokeTest
 
             if ((Native.GetWindowStyle(hwnd) & WS_MINIMIZEBOX) != 0)
                 Native.ShowWindow(hwnd, Native.SW_MINIMIZE);
+            else if (Native.ClassOf(hwnd) == "#32770")
+                Native.Close(hwnd); // a stray dialog, e.g. the runner image's System Properties
         }
 
         Thread.Sleep(500);
