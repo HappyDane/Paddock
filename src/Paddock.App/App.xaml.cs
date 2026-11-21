@@ -186,7 +186,8 @@ public partial class App : Application
         menu.Items.Add("-");
         menu.Items.Add("Restore All Icons to Desktop", null, (_, _) => RestoreAllIcons());
         menu.Items.Add("Settings", null, (_, _) => OpenSettings());
-        menu.Items.Add("Open Settings Folder", null, (_, _) => OpenSettingsFolder());
+        menu.Items.Add("Open Icons Folder", null, (_, _) => OpenFolder(IconStore.StoreRoot));
+        menu.Items.Add("Open Settings Folder", null, (_, _) => OpenFolder(AppPaths.DataFolder));
         menu.Items.Add("-");
         menu.Items.Add("Exit", null, (_, _) => ExitApplication());
 
@@ -251,25 +252,53 @@ public partial class App : Application
         settings.ShowDialog();
     }
 
-    /// <summary>Opens the folder holding settings.json and paddock.log.</summary>
-    private static void OpenSettingsFolder()
+    /// <summary>
+    /// Opens a folder in Explorer: Paddock's icon store (where paddocked icons
+    /// really are) or the one holding settings.json and paddock.log.
+    /// </summary>
+    private static void OpenFolder(string folder)
     {
         try
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
-                FileName = AppPaths.DataFolder,
+                FileName = folder,
                 UseShellExecute = true
             });
         }
         catch (Exception ex)
         {
-            Log.Error($"Could not open '{AppPaths.DataFolder}'.", ex);
+            Log.Error($"Could not open '{folder}'.", ex);
         }
     }
 
+    /// <summary>
+    /// Tray → Exit. While Paddock is closed, icons in paddocks are not on the
+    /// desktop, so say so and offer to put them back first. (Logging off or
+    /// shutting down never asks: the icons simply wait for the next start.)
+    /// </summary>
     private void ExitApplication()
     {
+        var moved = PaddockManager.CountMovedIcons();
+
+        if (moved > 0)
+        {
+            switch (Views.ExitPromptWindow.Ask(moved, IconStore.StoreRoot))
+            {
+                case Views.ExitChoice.Cancel:
+                    return;
+
+                case Views.ExitChoice.RestoreToDesktop:
+                    var restored = Host?.RestoreAllIconsToDesktop() ?? 0;
+                    Log.Info($"Exit: put {restored} icon(s) back on the desktop first.");
+                    break;
+
+                default:
+                    Log.Info($"Exit: {moved} icon(s) wait in their paddocks.");
+                    break;
+            }
+        }
+
         PaddockManager.SaveLayout();
         Shutdown();
     }

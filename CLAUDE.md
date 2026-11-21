@@ -49,7 +49,9 @@ tests/
   overwritten, and only items on the user's own desktop are ever moved — except
   files on the all-users desktop, which are *copied* in and the original removed
   via `ISharedDesktopRemover` (an elevated helper run of Paddock.exe, one
-  permission prompt per batch; declining falls back to referencing).
+  permission prompt per batch; declining falls back to referencing). While
+  Paddock is closed those icons are not on the desktop; tray → Exit says so
+  (`ExitPromptWindow`) and offers Restore All first. Logoff never asks.
 - **Right-drag on the desktop draws a paddock** without Paddock owning the
   desktop: `DesktopGestureService` runs a low-level mouse hook on its *own*
   thread (a hook on a busy UI thread stalls every mouse event in the session).

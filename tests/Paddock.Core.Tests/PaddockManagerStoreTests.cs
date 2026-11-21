@@ -40,6 +40,24 @@ public class PaddockManagerStoreTests : IDisposable
     }
 
     [Fact]
+    public void CountMovedIcons_CountsOnlyItemsTakenOffTheDesktop()
+    {
+        var apps = _manager.CreatePaddock("Apps", 0, 0, 300, 250);
+        var docs = _manager.CreatePaddock("Docs", 0, 0, 300, 250);
+        _manager.AddIconToPaddock(apps.Id, MakeDesktopFile("a.lnk"));
+        _manager.AddIconToPaddock(docs.Id, MakeDesktopFile("b.txt"));
+
+        // Referenced from elsewhere: it never left its folder.
+        var elsewhere = Path.Combine(_root, "Documents");
+        Directory.CreateDirectory(elsewhere);
+        var reference = Path.Combine(elsewhere, "report.pdf");
+        File.WriteAllText(reference, "x");
+        _manager.AddIconToPaddock(docs.Id, reference);
+
+        Assert.Equal(2, _manager.CountMovedIcons());
+    }
+
+    [Fact]
     public void AddIconToPaddock_MovesTheFileIntoThePaddockFolder()
     {
         var paddock = _manager.CreatePaddock("Apps", 0, 0, 300, 250);

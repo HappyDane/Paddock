@@ -387,6 +387,12 @@ public class PaddockManager
         };
     }
 
+    /// <summary>
+    /// How many items Paddock has taken off the desktop (moved into a
+    /// paddock's folder). Referenced items do not count: they never left.
+    /// </summary>
+    public int CountMovedIcons() => GetPaddocks().Sum(p => p.Icons.Count(i => i.Managed));
+
     public void SaveLayout()
     {
         _settingsService.Save();

@@ -61,6 +61,10 @@ that, and keeps it close to home:
   are only *referenced* — Paddock never relocates files from outside your desktop,
   and dragging such an item out only ever copies it.
 - Tray menu → **Restore All Icons to Desktop** empties every zone in one go.
+- **While Paddock is closed, icons in zones are not on the desktop** — they wait
+  in `Desktop\.Paddock` and are back the moment Paddock starts (it starts with
+  Windows by default). Tray → **Exit** says so and offers to put every icon back
+  on the desktop first; tray → **Open Icons Folder** shows where they are.
 
 Because the files really are on disk, zones survive restarts, and anything you
 drop into a zone's folder from Explorer shows up in the zone.
