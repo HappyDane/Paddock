@@ -207,13 +207,14 @@ internal sealed class SmokeTest
 
         var menuItem = WaitFor(() => FindMenuItem("Appearance…"), "the paddock menu", TimeSpan.FromSeconds(5));
         Thread.Sleep(300);
-        KeepImage("menu", Union(rect, MenuBounds()));
+        KeepImage("menu", MenuBounds());
         ((InvokePattern)menuItem.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
 
         var blue = WaitFor(() => FindAppElement("Blue", ControlType.Button), "the Appearance panel", TimeSpan.FromSeconds(5));
         Thread.Sleep(300);
         var panel = PanelBounds(blue);
-        KeepImage("appearance-default", Union(rect, panel));
+        Info($"Appearance panel at {panel}.");
+        KeepImage("appearance-default", panel);
 
         ClickElement(blue);
         WaitUntil(() => StyleSetting("backgroundColor") == "#1E4F8A", "the Blue colour to be saved",
@@ -228,7 +229,7 @@ internal sealed class SmokeTest
         WaitUntil(() => StyleSetting("opacity") == "0.5", "the opacity to be saved", onTimeout: () => $"opacity is {StyleSetting("opacity")}");
 
         Thread.Sleep(400);
-        KeepImage("appearance-changed", Union(PaddockRect, PanelBounds(blue)));
+        KeepImage("appearance-changed", Union(PaddockRect, Rectangle.Empty));
 
         ClickElement(WaitFor(() => FindAppElement("Reset", ControlType.Button), "the Reset button", TimeSpan.FromSeconds(3)));
         WaitUntil(() => StyleSetting("backgroundColor") == "#1C1C1E" && StyleSetting("iconSize") == "medium" && StyleSetting("opacity") == "0.88",
@@ -600,12 +601,18 @@ internal sealed class SmokeTest
         return paddock?["style"]?[name]?.ToString();
     }
 
+    /// <summary>
+    /// Width of one of the paddock's icons. Only the test files count: the
+    /// Appearance panel's colour swatches are list items in the same tree.
+    /// </summary>
     private double FirstIconWidth()
     {
         try
         {
-            var item = AutomationElement.FromHandle(_paddock).FindFirst(TreeScope.Descendants,
-                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.DataItem));
+            var item = AutomationElement.FromHandle(_paddock)
+                .FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.DataItem))
+                .Cast<AutomationElement>()
+                .FirstOrDefault(e => e.Current.Name.StartsWith("Smoke ", StringComparison.Ordinal));
             return item?.Current.BoundingRectangle.Width ?? 0;
         }
         catch (ElementNotAvailableException)
@@ -667,12 +674,12 @@ internal sealed class SmokeTest
             using (var g = Graphics.FromImage(shot))
                 g.CopyFromScreen(region.Location, Point.Empty, region.Size);
 
-            var scale = Math.Min(1.0, 360.0 / region.Width);
+            var scale = Math.Min(1.0, 240.0 / region.Width);
             using var small = new Bitmap(shot, new Size((int)(region.Width * scale), (int)(region.Height * scale)));
             using var stream = new MemoryStream();
             var jpeg = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
             using var parameters = new EncoderParameters(1);
-            parameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 60L);
+            parameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 45L);
             small.Save(stream, jpeg, parameters);
             _images.Add($"IMAGE {name} {Convert.ToBase64String(stream.ToArray())}");
         }
