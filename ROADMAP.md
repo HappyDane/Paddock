@@ -36,9 +36,9 @@ The foundation. Everything needed to replace a cluttered desktop with organized 
 - [x] All-users desktop shortcuts can be grouped (one permission prompt per drop)
 - [x] Windows CI: downloadable single-file exe + end-to-end desktop smoke test
 - [x] Right-drag on empty desktop to draw a paddock, with a "Create paddock here" menu
+- [x] Collect the icons that were sitting underneath a newly drawn paddock
 
 ### TODO
-- [ ] Collect the icons that were sitting underneath a newly drawn paddock
 - [ ] Multi-select inside a paddock (drag, launch and delete several at once)
 - [ ] Free icon placement inside a paddock (currently a reflowing grid)
 - [ ] Colour picker in the settings UI

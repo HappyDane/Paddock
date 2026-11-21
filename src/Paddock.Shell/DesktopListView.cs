@@ -15,6 +15,25 @@ internal static class DesktopListView
     /// </summary>
     private const uint TimeoutMs = 150;
 
+    /// <summary>The desktop's icon view window, or zero when there is none.</summary>
+    internal static IntPtr Find()
+    {
+        var hosts = new List<IntPtr> { NativeMethods.GetShellWindow() };
+
+        var worker = IntPtr.Zero;
+        while ((worker = NativeMethods.FindWindowExW(IntPtr.Zero, worker, "WorkerW", null)) != IntPtr.Zero)
+            hosts.Add(worker);
+
+        foreach (var host in hosts)
+        {
+            var view = NativeMethods.FindWindowExW(host, IntPtr.Zero, "SHELLDLL_DefView", null);
+            if (view != IntPtr.Zero)
+                return NativeMethods.FindWindowExW(view, IntPtr.Zero, "SysListView32", null);
+        }
+
+        return IntPtr.Zero;
+    }
+
     /// <summary>
     /// True when <paramref name="screenPoint"/> (physical pixels) is on the
     /// desktop's icon view but on no icon — empty desktop. False when it is on

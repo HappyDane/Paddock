@@ -101,7 +101,7 @@ internal sealed class DesktopDrawController : IDisposable
                  $"offering a paddock (menu at {cursor.X:0},{cursor.Y:0}).");
 
         var create = new MenuItem { Header = "Create paddock here", FontWeight = FontWeights.SemiBold };
-        create.Click += (_, _) => _app.Host?.CreatePaddock(area, beginRename: true);
+        create.Click += (_, _) => _app.Host?.CreatePaddock(area, beginRename: true, collectIconsUnderneath: true);
 
         var menu = new ContextMenu
         {

@@ -58,6 +58,12 @@ tests/
   icon), and replays a plain right-click so Explorer's desktop menu still opens.
   The state machine is `Core/DesktopDrawGesture` (unit-tested). Left-drag stays
   the desktop's rubber-band selection. Keep the hook callback fast.
+- **A new paddock collects the icons it was drawn over.** Positions and real
+  file paths come from Explorer's own folder view (`DesktopFolderView`:
+  IShellWindows → desktop IShellBrowser → IFolderView), never from icon labels,
+  which hide extensions. Cross-process COM: call it off the UI thread. Which
+  icons count is `Core/DesktopLayout.ItemsUnder` (centre inside; never
+  Paddock's own store folder).
 - **Drops are read in the OLE callback, applied after it.** And after dragging an
   icon *out*, Paddock never moves the file itself: the drop target (Explorer)
   does, and the store watcher notices. Moving it too races Explorer.

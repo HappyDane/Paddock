@@ -356,9 +356,25 @@ internal sealed class SmokeTest
     private void RightDragCreatesPaddock()
     {
         MinimiseOtherWindows();
-        var start = BareSpot(560, 140);
-        var end = new Point(860, 400);
+
+        // Draw it around one desktop icon: a new paddock takes in what it covers.
+        var alpha = IconBounds("Smoke Alpha");
+        Info($"'Smoke Alpha' is drawn at {alpha}.");
+
+        var left = Math.Max(2, (int)alpha.Left - 4);
+        var top = Math.Max(2, (int)alpha.Top - 6);
+        var right = left + 160; // paddocks are at least 140 wide
+        var bottom = (int)alpha.Bottom + 6;
+
+        var start = FirstBareSpot(new Point(right, bottom), new Point(right, top));
+        var end = start.Y == bottom ? new Point(left, top) : new Point(left, bottom);
+
         var before = PaddockCount();
+        var outside = DesktopIcons()
+            .Where(i => i.Current.Name.StartsWith("Smoke ", StringComparison.Ordinal))
+            .Where(i => !Centre(i.Current.BoundingRectangle).IsInside(left, top, right, bottom))
+            .Select(i => i.Current.Name)
+            .ToList();
 
         Native.Drag(start, end, rightButton: true);
 
@@ -375,15 +391,22 @@ internal sealed class SmokeTest
 
         Native.GetWindowRect(created, out var rect);
         Info($"New paddock at {rect}.");
-        Check(Math.Abs(rect.Left - start.X) <= 4 && Math.Abs(rect.Top - start.Y) <= 4
-              && Math.Abs(rect.Right - end.X) <= 4 && Math.Abs(rect.Bottom - end.Y) <= 4,
-            $"The paddock {rect} does not match the drawn area ({start}-{end}).");
+        Check(Math.Abs(rect.Left - left) <= 4 && Math.Abs(rect.Top - top) <= 4
+              && Math.Abs(rect.Right - right) <= 4 && Math.Abs(rect.Bottom - bottom) <= 4,
+            $"The paddock {rect} does not match the drawn area ({left},{top})-({right},{bottom}).");
         Check(PaddockCount() == before + 1, "settings.json does not list the new paddock.");
 
-        // It opens ready to be named. Only type once it really has the keyboard:
-        // keys sent to the desktop instead would open whatever icon is selected.
+        // The icon it was drawn over moves in; icons outside it stay put.
+        var folder = Path.Combine(Store, NewestPaddockId());
+        WaitUntil(() => File.Exists(Path.Combine(folder, "Smoke Alpha.txt")) && !File.Exists(Path.Combine(_desktop, "Smoke Alpha.txt")),
+            "the icon under the new paddock to move into it");
+        Check(outside.All(name => DesktopIcon(name) is not null || File.Exists(Path.Combine(_desktop, name + ".txt"))),
+            $"Icons outside the new paddock were taken too (folder holds {string.Join(", ", Directory.EnumerateFiles(folder).Select(Path.GetFileName))}).");
+
+        // It then opens ready to be named. Only type once it really has the
+        // keyboard: keys sent to the desktop would open whatever icon is selected.
         WaitUntil(() => Native.GetAncestor(Native.GetForegroundWindow(), Native.GA_ROOT) == created,
-            "the new paddock to take the keyboard for naming", TimeSpan.FromSeconds(3));
+            "the new paddock to take the keyboard for naming", TimeSpan.FromSeconds(5));
 
         foreach (var key in "DRAWN")
             Native.Press((byte)key);
@@ -393,6 +416,33 @@ internal sealed class SmokeTest
             "the new paddock to take the typed name", onTimeout: () => $"it is titled \"{Native.TitleOf(created)}\"");
         Screenshot("created");
     }
+
+    private static System.Windows.Rect IconBounds(string name)
+        => (DesktopIcon(name) ?? throw new SmokeFailure($"'{name}' is not on the desktop.")).Current.BoundingRectangle;
+
+    private static (double X, double Y) Centre(System.Windows.Rect r) => (r.Left + r.Width / 2, r.Top + r.Height / 2);
+
+    private static Point FirstBareSpot(params Point[] candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                return BareSpot(candidate.X, candidate.Y);
+            }
+            catch (SmokeFailure)
+            {
+                // Try the next one.
+            }
+        }
+
+        throw new SmokeFailure($"None of {string.Join(", ", candidates)} is bare desktop.");
+    }
+
+    private string NewestPaddockId()
+        => JsonNode.Parse(File.ReadAllText(SettingsFile))?["corrals"]?["default"]?["paddocks"]?.AsArray()
+               .LastOrDefault()?["id"]?.GetValue<string>()
+           ?? throw new SmokeFailure("settings.json lists no paddock.");
 
     private void ClickingElsewhereWithdrawsOffer()
     {
@@ -843,4 +893,10 @@ internal sealed class SmokeTest
     }
 
     private sealed class SmokeFailure(string message) : Exception(message);
+}
+
+internal static class PointExtensions
+{
+    internal static bool IsInside(this (double X, double Y) point, int left, int top, int right, int bottom)
+        => point.X >= left && point.X < right && point.Y >= top && point.Y < bottom;
 }

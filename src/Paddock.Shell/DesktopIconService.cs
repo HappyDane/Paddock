@@ -101,6 +101,13 @@ public sealed class DesktopIconService : IDisposable
     }
 
     /// <summary>
+    /// Where each file and folder on the desktop is drawn: its path and the
+    /// centre of its icon in physical screen pixels. Asks Explorer across
+    /// processes, so call it off the UI thread. Empty when Explorer cannot say.
+    /// </summary>
+    public IReadOnlyList<DesktopIconSpot> GetIconSpots() => DesktopFolderView.GetIconSpots();
+
+    /// <summary>
     /// Watches the store for changes made outside the app (files dropped into a
     /// paddock folder from Explorer, items deleted, and so on). The callback is
     /// debounced and raised on a background thread — marshal to the UI yourself.

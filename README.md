@@ -67,12 +67,13 @@ drop into a zone's folder from Explorer shows up in the zone.
 
 ### Getting icons into a zone
 
-Right-drag a zone on an empty part of the desktop, then either drag icons in, or use
-the zone's right-click menu → **Fill from Desktop**, which can move everything
-or just one kind of thing: shortcuts, folders, documents, images, media,
-archives, or everything else. The count is always confirmed before anything
-moves. Paddock does not yet work out which icons were sitting *underneath* a new
-zone — see [Known limitations](#known-limitations).
+Draw a zone over icons that are already on the desktop and they go straight into
+it: right-drag from an empty spot so the area covers them, then **Create paddock
+here**. (Icons count as covered when their centre is inside the zone.) After
+that, drag more icons in, or use the zone's right-click menu → **Fill from
+Desktop**, which can move everything or just one kind of thing: shortcuts,
+folders, documents, images, media, archives, or everything else. The count is
+always confirmed before anything moves.
 
 ---
 
@@ -145,10 +146,6 @@ if you ever need to see what the app thought it was doing. Settings include:
 
 ## Known limitations
 
-- **Icons underneath a new zone are not collected automatically.** Reading the
-  desktop's icon positions means poking around inside Explorer's list view from
-  another process; until that is in, draw zones on free space and use
-  **Fill from Desktop** or drag icons in.
 - **All-users desktop items** (`C:\Users\Public\Desktop`) need administrator
   permission to take off the desktop, and taking them off removes them for every
   account on the PC. Folders there are only ever referenced.

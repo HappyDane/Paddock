@@ -327,6 +327,14 @@ internal static partial class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool ScreenToClient(IntPtr hwnd, ref POINT point);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool ClientToScreen(IntPtr hwnd, ref POINT point);
+
+    /// <summary>A shell item's name in the given form; free the result with CoTaskMemFree.</summary>
+    [LibraryImport("shell32.dll")]
+    internal static partial int SHGetNameFromIDList(IntPtr pidl, uint sigdnName, out IntPtr name);
+
     [LibraryImport("user32.dll")]
     internal static partial uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
 

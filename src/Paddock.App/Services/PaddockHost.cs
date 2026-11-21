@@ -99,15 +99,16 @@ internal sealed class PaddockHost : IDisposable
         if (area is null)
             return;
 
-        CreatePaddock(area.Value, beginRename: true);
+        CreatePaddock(area.Value, beginRename: true, collectIconsUnderneath: true);
     }
 
     /// <summary>
-    /// Creates a paddock over a screen area (DIPs). With <paramref name="beginRename"/>
-    /// its title opens for editing straight away, so a freshly drawn paddock can
-    /// be named without a trip to the context menu.
+    /// Creates a paddock over a screen area (DIPs). With <paramref name="collectIconsUnderneath"/>
+    /// the desktop icons it was drawn over move into it, as with Fences. With
+    /// <paramref name="beginRename"/> its title then opens for editing, so a
+    /// freshly drawn paddock can be named without a trip to the context menu.
     /// </summary>
-    internal void CreatePaddock(Rect screenArea, bool beginRename = false)
+    internal void CreatePaddock(Rect screenArea, bool beginRename = false, bool collectIconsUnderneath = false)
     {
         var model = _app.PaddockManager.CreatePaddock(
             title: "New Paddock",
@@ -129,7 +130,43 @@ internal sealed class PaddockHost : IDisposable
 
         Log.Info($"Created paddock at {model.X:0},{model.Y:0} {model.Width:0}x{model.Height:0}.");
 
-        if (beginRename)
+        if (collectIconsUnderneath)
+            CollectIconsUnderneath(window, beginRename);
+        else if (beginRename)
+            window.ViewModel.BeginRenameTitle();
+    }
+
+    /// <summary>
+    /// Moves the desktop icons a new paddock covers into it, then (optionally)
+    /// opens its title for naming. Explorer is asked where its icons are on a
+    /// background thread; the moves themselves happen here, as one batch — one
+    /// settings write, and at most one permission prompt for all-users items.
+    /// </summary>
+    private async void CollectIconsUnderneath(PaddockWindow window, bool beginRename)
+    {
+        try
+        {
+            var spots = await Task.Run(_app.DesktopIconService.GetIconSpots);
+
+            var vm = window.ViewModel;
+            var scale = ScreenHelper.DipScale;
+            var area = new LayoutBounds(vm.X * scale, vm.Y * scale, vm.Width * scale, vm.Height * scale);
+            var items = DesktopLayout.ItemsUnder(spots, area, _app.IconStore);
+
+            if (items.Count > 0 && _windows.Contains(window))
+            {
+                vm.AddIcons(items);
+                _app.DesktopIconService.NotifyShellOfDesktopChange();
+            }
+
+            Log.Info($"New paddock collected {items.Count} of the {spots.Count} desktop icon(s) found.");
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Could not collect the icons under the new paddock.", ex);
+        }
+
+        if (beginRename && _windows.Contains(window))
             window.ViewModel.BeginRenameTitle();
     }
 
