@@ -29,6 +29,7 @@ internal sealed class SmokeTest
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Paddock");
 
     private readonly List<string> _failures = new();
+    private readonly List<string> _images = new();
     private Process? _app;
     private IntPtr _paddock;
     private int _shot;
@@ -63,6 +64,7 @@ internal sealed class SmokeTest
         Step("Sort By > File Size reorders the icons", SortBySize);
         Step("Sort By > Date Modified reorders the icons", SortByDate);
         Step("Sort By > Ascending reverses the order", ToggleAscending);
+        Step("Appearance… changes colour, icon size and opacity live, and Reset undoes them", ChangeAppearance);
         Step("Clicking a paddock does not lift it above an application", ClickStaysBelowApps);
         Step("Show Desktop (Win+D) keeps the paddock visible", ShowDesktopKeepsPaddock);
         Step("Dragging an icon out puts it back on the desktop", DragIconOut);
@@ -198,6 +200,47 @@ internal sealed class SmokeTest
         ExpectOrderOfPresent("Smoke Alpha", "Smoke Bravo", "Smoke Charlie");
     }
 
+    private void ChangeAppearance()
+    {
+        var rect = PaddockRect;
+        Native.RightClick(new Point(rect.Right - 70, rect.Bottom - 60));
+
+        var menuItem = WaitFor(() => FindMenuItem("Appearance…"), "the paddock menu", TimeSpan.FromSeconds(5));
+        Thread.Sleep(300);
+        KeepImage("menu", Union(rect, MenuBounds()));
+        ((InvokePattern)menuItem.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+
+        var blue = WaitFor(() => FindAppElement("Blue", ControlType.Button), "the Appearance panel", TimeSpan.FromSeconds(5));
+        Thread.Sleep(300);
+        var panel = PanelBounds(blue);
+        KeepImage("appearance-default", Union(rect, panel));
+
+        ClickElement(blue);
+        WaitUntil(() => StyleSetting("backgroundColor") == "#1E4F8A", "the Blue colour to be saved",
+            onTimeout: () => $"backgroundColor is {StyleSetting("backgroundColor")}");
+
+        ClickElement(WaitFor(() => FindAppElement("Large", ControlType.RadioButton), "the Large icon size", TimeSpan.FromSeconds(3)));
+        WaitUntil(() => FirstIconWidth() >= 98, "the icons to grow to Large", onTimeout: () => $"an icon is {FirstIconWidth():0} wide");
+        WaitUntil(() => StyleSetting("iconSize") == "large", "the icon size to be saved");
+
+        var slider = WaitFor(() => FindAppElement("Opacity", ControlType.Slider), "the opacity slider", TimeSpan.FromSeconds(3));
+        ((RangeValuePattern)slider.GetCurrentPattern(RangeValuePattern.Pattern)).SetValue(0.5);
+        WaitUntil(() => StyleSetting("opacity") == "0.5", "the opacity to be saved", onTimeout: () => $"opacity is {StyleSetting("opacity")}");
+
+        Thread.Sleep(400);
+        KeepImage("appearance-changed", Union(PaddockRect, PanelBounds(blue)));
+
+        ClickElement(WaitFor(() => FindAppElement("Reset", ControlType.Button), "the Reset button", TimeSpan.FromSeconds(3)));
+        WaitUntil(() => StyleSetting("backgroundColor") == "#1C1C1E" && StyleSetting("iconSize") == "medium" && StyleSetting("opacity") == "0.88",
+            "Reset to restore the standard look",
+            onTimeout: () => $"style is {StyleSetting("backgroundColor")}, {StyleSetting("iconSize")}, {StyleSetting("opacity")}");
+        WaitUntil(() => FirstIconWidth() is > 70 and < 90, "the icons to return to Medium");
+
+        // Clicking away closes the panel, as with any popover.
+        Native.Click(BareSpot(300, 620));
+        WaitUntil(() => FindAppElement("Blue", ControlType.Button) is null, "the Appearance panel to close");
+    }
+
     private void ClickStaysBelowApps()
     {
         var rect = PaddockRect;
@@ -315,7 +358,7 @@ internal sealed class SmokeTest
         var inside = Directory.EnumerateFiles(PaddockFolder).Select(Path.GetFileName).ToList();
         Check(inside.Count > 0, "Nothing in the paddock to return.");
 
-        InvokeMenu("Remove Paddock (icons return to desktop)");
+        InvokeMenu("Close Paddock");
         WaitUntil(() => FindPaddockWindow() == IntPtr.Zero, "the paddock window to close");
 
         foreach (var name in inside)
@@ -549,6 +592,96 @@ internal sealed class SmokeTest
                + $". Foreground: {Describe(Native.GetForegroundWindow())}";
     }
 
+    private string? StyleSetting(string name)
+    {
+        var json = JsonNode.Parse(File.ReadAllText(SettingsFile));
+        var paddock = json?["corrals"]?["default"]?["paddocks"]?.AsArray()
+            .FirstOrDefault(p => p?["id"]?.GetValue<string>() == PaddockId);
+        return paddock?["style"]?[name]?.ToString();
+    }
+
+    private double FirstIconWidth()
+    {
+        try
+        {
+            var item = AutomationElement.FromHandle(_paddock).FindFirst(TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.DataItem));
+            return item?.Current.BoundingRectangle.Width ?? 0;
+        }
+        catch (ElementNotAvailableException)
+        {
+            return 0;
+        }
+    }
+
+    private static void ClickElement(AutomationElement element)
+    {
+        var bounds = element.Current.BoundingRectangle;
+        Native.Click(new Point((int)(bounds.Left + bounds.Width / 2), (int)(bounds.Top + bounds.Height / 2)));
+    }
+
+    /// <summary>The open context menu's window, for a picture of it.</summary>
+    private Rectangle MenuBounds()
+    {
+        var menu = AutomationElement.RootElement.FindFirst(TreeScope.Children, new AndCondition(
+            new PropertyCondition(AutomationElement.ProcessIdProperty, _app!.Id),
+            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Menu)));
+        return menu is null ? Rectangle.Empty : ToRectangle(menu.Current.BoundingRectangle);
+    }
+
+    /// <summary>The Appearance panel's window, found from one of its swatches.</summary>
+    private static Rectangle PanelBounds(AutomationElement inside)
+    {
+        var walker = TreeWalker.ControlViewWalker;
+        var element = inside;
+        while (walker.GetParent(element) is { } parent && parent != AutomationElement.RootElement)
+            element = parent;
+        return ToRectangle(element.Current.BoundingRectangle);
+    }
+
+    private static Rectangle ToRectangle(System.Windows.Rect r)
+        => r.IsEmpty ? Rectangle.Empty : new Rectangle((int)r.Left, (int)r.Top, (int)r.Width, (int)r.Height);
+
+    private static Rectangle Union(Native.RECT a, Rectangle b)
+    {
+        var first = new Rectangle(a.Left, a.Top, a.Width, a.Height);
+        var both = b.IsEmpty ? first : Rectangle.Union(first, b);
+        both.Inflate(12, 12);
+        return both;
+    }
+
+    /// <summary>
+    /// With PADDOCK_SMOKE_LOG_IMAGES=1, keeps a small JPEG of part of the
+    /// screen to print as base64 at the end of the run — for reviewing the look
+    /// from places that can read the log but not download the artifacts.
+    /// </summary>
+    private void KeepImage(string name, Rectangle region)
+    {
+        if (Environment.GetEnvironmentVariable("PADDOCK_SMOKE_LOG_IMAGES") != "1" || region.IsEmpty)
+            return;
+
+        try
+        {
+            region.Intersect(SystemInformation.VirtualScreen);
+            using var shot = new Bitmap(region.Width, region.Height);
+            using (var g = Graphics.FromImage(shot))
+                g.CopyFromScreen(region.Location, Point.Empty, region.Size);
+
+            var scale = Math.Min(1.0, 360.0 / region.Width);
+            using var small = new Bitmap(shot, new Size((int)(region.Width * scale), (int)(region.Height * scale)));
+            using var stream = new MemoryStream();
+            var jpeg = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
+            using var parameters = new EncoderParameters(1);
+            parameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 60L);
+            small.Save(stream, jpeg, parameters);
+            _images.Add($"IMAGE {name} {Convert.ToBase64String(stream.ToArray())}");
+        }
+        catch (Exception ex)
+        {
+            Info($"(image '{name}' failed: {ex.Message})");
+        }
+    }
+
     private int PaddockCount()
         => JsonNode.Parse(File.ReadAllText(SettingsFile))?["corrals"]?["default"]?["paddocks"]?.AsArray().Count ?? 0;
 
@@ -609,10 +742,13 @@ internal sealed class SmokeTest
         Thread.Sleep(600);
     }
 
-    private AutomationElement? FindMenuItem(string name)
+    private AutomationElement? FindMenuItem(string name) => FindAppElement(name, ControlType.MenuItem);
+
+    /// <summary>An on-screen element of Paddock's, in any of its windows (menus and popovers included).</summary>
+    private AutomationElement? FindAppElement(string name, ControlType type)
     {
         var condition = new AndCondition(
-            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.MenuItem),
+            new PropertyCondition(AutomationElement.ControlTypeProperty, type),
             new PropertyCondition(AutomationElement.NameProperty, name));
 
         var windows = AutomationElement.RootElement.FindAll(TreeScope.Children,
@@ -829,6 +965,10 @@ internal sealed class SmokeTest
         }
 
         Screenshot("end");
+
+        foreach (var image in _images)
+            Console.WriteLine(image);
+
         Console.WriteLine();
         Console.WriteLine(_failures.Count == 0
             ? "All desktop smoke checks passed."

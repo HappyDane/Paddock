@@ -8,9 +8,9 @@ Create styled zones on your desktop to group and organize icons. Clean, minimal,
 
 ## Features
 
-**Zones** — Create resizable zones ("paddocks") to group your desktop icons. Hold the right mouse button on an empty part of the desktop, drag out an area and choose **Create paddock here** — then just type its name. (Or use the tray icon → **New Paddock...**.) Drag the title strip to move, drag the bottom-right grip to resize, right-click to configure.
+**Zones** — Create resizable zones ("paddocks") to group your desktop icons. Hold the right mouse button on an empty part of the desktop, drag out an area and choose **Create paddock here** — then just type its name. (Or use the tray icon → **New Paddock...**.) Drag the title strip to move, drag the bottom-right grip to resize, right-click for everything else — including **Close Paddock**, which puts its icons back on the desktop.
 
-**Styling** — Per-zone transparency, background color, and corner radius. Apple-inspired dark and light themes with a hairline edge and hover-reveal controls. Transparency applies to the panel, so icons and labels stay crisp on top of it.
+**Appearance** — Right-click a zone → **Appearance…** for a small panel beside it: a row of soft colours, an opacity slider, icon size (small / medium / large), font (system, compact, serif, mono) and when to show the title. Every change shows immediately; **Reset** goes back to the standard look. Text picks light or dark by itself so labels stay readable on any colour, and transparency applies to the panel only, so icons and labels stay crisp. Menus and tooltips follow the dark or light theme.
 
 **Sorting** — Sort icons within any zone by name, date modified, file type, or file size. Ascending or descending, persisted per zone.
 

@@ -152,8 +152,14 @@ public partial class App : Application
 
         var dictionary = new ResourceDictionary { Source = new Uri(path, UriKind.Relative) };
 
+        // The theme supplies colours; Controls.xaml (menus, tooltips) uses them
+        // and must stay merged whichever theme is active.
         Resources.MergedDictionaries.Clear();
         Resources.MergedDictionaries.Add(dictionary);
+        Resources.MergedDictionaries.Add(new ResourceDictionary
+        {
+            Source = new Uri("Resources/Controls.xaml", UriKind.Relative),
+        });
     }
 
     /// <summary>

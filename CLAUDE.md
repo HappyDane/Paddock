@@ -138,6 +138,15 @@ Requires the Windows Application Packaging Project tooling. It is deliberately
 2. Create or extend a service in `Shell/` with a clean interface
 3. Register the service in `App.xaml.cs`
 
+### Changing how paddocks look
+Per-paddock look lives in `PaddockStyle` (colour, opacity, `IconSize`, `Font`)
+and is edited in `Views/AppearancePanel` (a popover opened from the paddock's
+menu). Text colour is derived, never stored: `ColorContrast.PrefersDarkText`
+picks light or dark labels for the paddock's colour and opacity. App-wide menu
+and tooltip styling is `Resources/Controls.xaml`, coloured by the active theme
+dictionary — keep both themes' keys in step. There is deliberately no close
+button on a paddock: **Close Paddock** is in its right-click menu.
+
 ### Changing anything about a paddock's window
 `PaddockHost` creates and owns `PaddockWindow`s; `PaddockControl` handles the
 mouse and applies geometry to its host window. Keep `Topmost` false and keep the

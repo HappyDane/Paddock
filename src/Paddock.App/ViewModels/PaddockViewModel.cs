@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Paddock.Core.Models;
 using Paddock.Core.Services;
 
@@ -24,6 +25,22 @@ public class PaddockViewModel : INotifyPropertyChanged
     private Brush? _backgroundBrush;
     private Brush? _borderBrush;
 
+    // Text that stays readable on whatever colour the paddock is.
+    private static readonly Brush LightLabel = Frozen(0xFF, 0xF2, 0xF2, 0xF7);
+    private static readonly Brush LightTitle = Frozen(0xC0, 0xFF, 0xFF, 0xFF);
+    private static readonly Brush LightHover = Frozen(0x1F, 0xFF, 0xFF, 0xFF);
+    private static readonly Brush LightEdge = Frozen(0x26, 0xFF, 0xFF, 0xFF);
+    private static readonly Brush DarkLabel = Frozen(0xFF, 0x1C, 0x1C, 0x1E);
+    private static readonly Brush DarkTitle = Frozen(0xA6, 0x00, 0x00, 0x00);
+    private static readonly Brush DarkHover = Frozen(0x14, 0x00, 0x00, 0x00);
+    private static readonly Brush DarkEdge = Frozen(0x1F, 0x00, 0x00, 0x00);
+
+    /// <summary>
+    /// Appearance changes arrive with every step of a slider; the layout is
+    /// written once they settle rather than dozens of times a second.
+    /// </summary>
+    private readonly DispatcherTimer _saveSoon;
+
     public event Action? RemoveRequested;
 
     public PaddockViewModel(PaddockModel model, PaddockManager manager)
@@ -31,6 +48,16 @@ public class PaddockViewModel : INotifyPropertyChanged
         _model = model;
         _manager = manager;
         _renameText = model.Title;
+
+        _saveSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _saveSoon.Tick += (_, _) =>
+        {
+            _saveSoon.Stop();
+            _manager.SaveLayout();
+        };
+
+        Swatches = Palette.Select(p => new ColorSwatch(p.Name, p.Hex)).ToList();
+        UpdateSwatchSelection();
 
         RefreshIcons();
     }
@@ -77,9 +104,25 @@ public class PaddockViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool IsTitleAlwaysVisible => _model.TitleVisibility == TitleVisibility.Always;
-    public bool IsTitleHoverVisible => _model.TitleVisibility == TitleVisibility.Hover;
-    public bool IsTitleHidden => _model.TitleVisibility == TitleVisibility.Hidden;
+    // Two-way for the Appearance panel's segmented control: choosing a segment
+    // sets it; un-choosing (the other segment taking over) does nothing.
+    public bool IsTitleAlwaysVisible
+    {
+        get => _model.TitleVisibility == TitleVisibility.Always;
+        set { if (value) TitleVisibility = TitleVisibility.Always; }
+    }
+
+    public bool IsTitleHoverVisible
+    {
+        get => _model.TitleVisibility == TitleVisibility.Hover;
+        set { if (value) TitleVisibility = TitleVisibility.Hover; }
+    }
+
+    public bool IsTitleHidden
+    {
+        get => _model.TitleVisibility == TitleVisibility.Hidden;
+        set { if (value) TitleVisibility = TitleVisibility.Hidden; }
+    }
 
     public bool IsRenaming
     {
@@ -122,12 +165,16 @@ public class PaddockViewModel : INotifyPropertyChanged
             OnPropertyChanged();
             OnPropertyChanged(nameof(ContentVisibility));
             OnPropertyChanged(nameof(DisplayHeight));
+            OnPropertyChanged(nameof(RollUpMenuText));
             OnPropertyChanged(nameof(EmptyHintVisibility));
             _manager.SaveLayout();
         }
     }
 
     public Visibility ContentVisibility => IsRolledUp ? Visibility.Collapsed : Visibility.Visible;
+
+    /// <summary>The menu says what will happen, not what the state is.</summary>
+    public string RollUpMenuText => IsRolledUp ? "Expand" : "Roll Up";
 
     public bool ExcludeFromQuickHide
     {
@@ -173,7 +220,27 @@ public class PaddockViewModel : INotifyPropertyChanged
     public bool IsSortedByType => _model.SortBy == SortField.FileType;
     public bool IsSortedBySize => _model.SortBy == SortField.FileSize;
 
-    // --- Styling ---
+    // --- Appearance ---
+
+    /// <summary>
+    /// The colours offered in the Appearance panel: muted, so they read as a
+    /// tint over the wallpaper rather than a block of paint.
+    /// </summary>
+    public static readonly IReadOnlyList<(string Name, string Hex)> Palette =
+    [
+        ("Graphite", PaddockStyle.DefaultBackgroundColor),
+        ("Slate", "#39404D"),
+        ("Blue", "#1E4F8A"),
+        ("Teal", "#1B6264"),
+        ("Green", "#2D5F3F"),
+        ("Amber", "#8A5A16"),
+        ("Rose", "#8A2F4D"),
+        ("Purple", "#4E3A8A"),
+        ("Sand", "#E9E2D0"),
+        ("Frost", "#F2F2F7"),
+    ];
+
+    public IReadOnlyList<ColorSwatch> Swatches { get; }
 
     /// <summary>
     /// Background including the configured transparency. The alpha lives in the
@@ -182,7 +249,8 @@ public class PaddockViewModel : INotifyPropertyChanged
     /// </summary>
     public Brush BackgroundBrush => _backgroundBrush ??= BuildBackgroundBrush();
 
-    public Brush BorderBrush => _borderBrush ??= BuildBorderBrush();
+    /// <summary>The hairline edge: light on dark paddocks, dark on light ones.</summary>
+    public Brush BorderBrush => _borderBrush ??= UsesDarkText ? DarkEdge : BuildBorderBrush();
 
     public Thickness BorderThickness => new(_model.Style.BorderThickness);
 
@@ -194,10 +262,7 @@ public class PaddockViewModel : INotifyPropertyChanged
         set
         {
             _model.Style.BackgroundColor = value;
-            InvalidateBrushes();
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(BackgroundBrush));
-            _manager.SaveLayout();
+            AppearanceChanged();
         }
     }
 
@@ -206,13 +271,12 @@ public class PaddockViewModel : INotifyPropertyChanged
         get => _model.Style.Opacity;
         set
         {
-            _model.Style.Opacity = value;
-            InvalidateBrushes();
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(BackgroundBrush));
-            _manager.SaveLayout();
+            _model.Style.Opacity = Math.Clamp(value, 0.05, 1);
+            AppearanceChanged();
         }
     }
+
+    public string OpacityText => $"{Math.Round(_model.Style.Opacity * 100):0}%";
 
     public double PaddockCornerRadius
     {
@@ -224,6 +288,143 @@ public class PaddockViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(CornerRadius));
             _manager.SaveLayout();
         }
+    }
+
+    public IconSize IconSize
+    {
+        get => _model.Style.IconSize;
+        set
+        {
+            _model.Style.IconSize = value;
+            AppearanceChanged();
+        }
+    }
+
+    public bool IsIconSmall
+    {
+        get => IconSize == IconSize.Small;
+        set { if (value) IconSize = IconSize.Small; }
+    }
+
+    public bool IsIconMedium
+    {
+        get => IconSize == IconSize.Medium;
+        set { if (value) IconSize = IconSize.Medium; }
+    }
+
+    public bool IsIconLarge
+    {
+        get => IconSize == IconSize.Large;
+        set { if (value) IconSize = IconSize.Large; }
+    }
+
+    // What an icon size means on screen (DIPs).
+    public double IconPixelSize => IconSize switch { IconSize.Small => 32, IconSize.Large => 64, _ => 44 };
+    public double IconCellWidth => IconSize switch { IconSize.Small => 66, IconSize.Large => 96, _ => 76 };
+    public double IconCellHeight => IconSize switch { IconSize.Small => 72, IconSize.Large => 112, _ => 84 };
+    public double LabelFontSize => IconSize switch { IconSize.Small => 10, IconSize.Large => 12, _ => 10.5 };
+    public double LabelLineHeight => Math.Round(LabelFontSize * 1.33);
+    public double LabelMaxHeight => LabelLineHeight * 2;
+
+    public PaddockFont Font
+    {
+        get => _model.Style.Font;
+        set
+        {
+            _model.Style.Font = value;
+            AppearanceChanged();
+        }
+    }
+
+    public bool IsFontSystem
+    {
+        get => Font == PaddockFont.System;
+        set { if (value) Font = PaddockFont.System; }
+    }
+
+    public bool IsFontCompact
+    {
+        get => Font == PaddockFont.Compact;
+        set { if (value) Font = PaddockFont.Compact; }
+    }
+
+    public bool IsFontSerif
+    {
+        get => Font == PaddockFont.Serif;
+        set { if (value) Font = PaddockFont.Serif; }
+    }
+
+    public bool IsFontMono
+    {
+        get => Font == PaddockFont.Mono;
+        set { if (value) Font = PaddockFont.Mono; }
+    }
+
+    public FontFamily TextFontFamily => FontFor(Font);
+
+    public static FontFamily FontFor(PaddockFont font) => font switch
+    {
+        PaddockFont.Compact => new FontFamily("Bahnschrift, Segoe UI"),
+        PaddockFont.Serif => new FontFamily("Georgia, Cambria, Segoe UI"),
+        PaddockFont.Mono => new FontFamily("Cascadia Mono, Consolas"),
+        _ => new FontFamily("Segoe UI Variable Text, Segoe UI"),
+    };
+
+    public Brush LabelBrush => UsesDarkText ? DarkLabel : LightLabel;
+
+    public Brush TitleBrush => UsesDarkText ? DarkTitle : LightTitle;
+
+    public Brush IconHoverBrush => UsesDarkText ? DarkHover : LightHover;
+
+    /// <summary>Puts colour, opacity, icon size, font and title back to the defaults.</summary>
+    public void ResetAppearance()
+    {
+        var defaults = new PaddockStyle();
+        _model.Style.BackgroundColor = defaults.BackgroundColor;
+        _model.Style.Opacity = defaults.Opacity;
+        _model.Style.IconSize = defaults.IconSize;
+        _model.Style.Font = defaults.Font;
+        AppearanceChanged();
+        TitleVisibility = new PaddockModel().TitleVisibility;
+    }
+
+    private bool UsesDarkText
+    {
+        get
+        {
+            var colour = ParseColour(_model.Style.BackgroundColor, FallbackBackground);
+            return ColorContrast.PrefersDarkText(colour.R, colour.G, colour.B, _model.Style.Opacity);
+        }
+    }
+
+    /// <summary>One appearance setting changed: redraw everything that depends on it.</summary>
+    private void AppearanceChanged()
+    {
+        InvalidateBrushes();
+        UpdateSwatchSelection();
+
+        foreach (var name in AppearanceProperties)
+            OnPropertyChanged(name);
+
+        _saveSoon.Stop();
+        _saveSoon.Start();
+    }
+
+    private static readonly string[] AppearanceProperties =
+    [
+        nameof(BackgroundColor), nameof(BackgroundBrush), nameof(BorderBrush),
+        nameof(PaddockOpacity), nameof(OpacityText),
+        nameof(IconSize), nameof(IsIconSmall), nameof(IsIconMedium), nameof(IsIconLarge),
+        nameof(IconPixelSize), nameof(IconCellWidth), nameof(IconCellHeight),
+        nameof(LabelFontSize), nameof(LabelLineHeight), nameof(LabelMaxHeight),
+        nameof(Font), nameof(IsFontSystem), nameof(IsFontCompact), nameof(IsFontSerif), nameof(IsFontMono),
+        nameof(TextFontFamily), nameof(LabelBrush), nameof(TitleBrush), nameof(IconHoverBrush),
+    ];
+
+    private void UpdateSwatchSelection()
+    {
+        foreach (var swatch in Swatches)
+            swatch.IsSelected = string.Equals(swatch.Hex, _model.Style.BackgroundColor, StringComparison.OrdinalIgnoreCase);
     }
 
     // --- Icons ---
@@ -471,6 +672,13 @@ public class PaddockViewModel : INotifyPropertyChanged
         _borderBrush = null;
     }
 
+    private static Brush Frozen(byte a, byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+        brush.Freeze();
+        return brush;
+    }
+
     private static Color ParseColour(string value, Color fallback)
     {
         try
@@ -490,6 +698,43 @@ public class PaddockViewModel : INotifyPropertyChanged
 
     protected void OnPropertyChanged([CallerMemberName] string? name = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}
+
+/// <summary>One colour in the Appearance panel.</summary>
+public sealed class ColorSwatch : INotifyPropertyChanged
+{
+    private bool _isSelected;
+
+    public ColorSwatch(string name, string hex)
+    {
+        Name = name;
+        Hex = hex;
+
+        var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
+        brush.Freeze();
+        Brush = brush;
+    }
+
+    public string Name { get; }
+
+    public string Hex { get; }
+
+    public Brush Brush { get; }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value)
+                return;
+
+            _isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }
 
 /// <summary>What a drop onto a paddock carries: one icon from another paddock, or files.</summary>

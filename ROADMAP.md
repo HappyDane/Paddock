@@ -41,7 +41,8 @@ The foundation. Everything needed to replace a cluttered desktop with organized 
 ### TODO
 - [ ] Multi-select inside a paddock (drag, launch and delete several at once)
 - [ ] Free icon placement inside a paddock (currently a reflowing grid)
-- [ ] Colour picker in the settings UI
+- [x] Per-paddock Appearance panel: colour, opacity, icon size, font, title
+- [x] Rounded, theme-coloured menus and tooltips; no close button (Close Paddock is in the menu)
 - [ ] Fade animation on quick hide, smooth roll-up animation
 - [ ] Corral management UI (currently model + service only)
 - [ ] MSI/MSIX installer
@@ -71,9 +72,9 @@ Polish and productivity. The features that make you never want to go back.
 - [ ] Option to override per-paddock
 
 ### Per-Zone Icon Size
-- [ ] Small (32px), Medium (44px), Large (64px), Extra Large (96px)
-- [ ] Configurable per paddock via context menu
-- [ ] Grid reflows automatically when size changes
+- [x] Small (32px), Medium (44px), Large (64px) — in the Appearance panel
+- [ ] Extra Large (96px)
+- [x] Grid reflows automatically when size changes
 
 ### Pinned Icon Positions
 - [ ] Icons maintain their grid position on paddock resize

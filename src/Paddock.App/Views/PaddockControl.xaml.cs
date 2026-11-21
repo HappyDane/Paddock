@@ -242,14 +242,6 @@ public partial class PaddockControl : UserControl
             ViewModel.CommitRename();
     }
 
-    // --- Close ---
-
-    private void CloseButton_Click(object sender, MouseButtonEventArgs e)
-    {
-        ViewModel.Remove();
-        e.Handled = true;
-    }
-
     // --- Dropping items in ---
 
     private void Paddock_DragOver(object sender, DragEventArgs e)
@@ -410,6 +402,13 @@ public partial class PaddockControl : UserControl
         ViewModel.BeginRenameTitle();
     }
 
+    /// <summary>
+    /// Opens the Appearance popover once the menu has closed; opening it while
+    /// the menu still holds the mouse would close it again straight away.
+    /// </summary>
+    private void ContextMenu_Appearance(object sender, RoutedEventArgs e)
+        => Dispatcher.BeginInvoke(DispatcherPriority.Input, () => AppearancePopup.IsOpen = true);
+
     private void ContextMenu_Remove(object sender, RoutedEventArgs e)
     {
         ViewModel.Remove();
@@ -460,15 +459,6 @@ public partial class PaddockControl : UserControl
         ViewModel.AddIcons(items);
         CurrentApp.DesktopIconService.NotifyShellOfDesktopChange();
     }
-
-    private void TitleVisibility_Always(object sender, RoutedEventArgs e)
-        => ViewModel.TitleVisibility = TitleVisibility.Always;
-
-    private void TitleVisibility_Hover(object sender, RoutedEventArgs e)
-        => ViewModel.TitleVisibility = TitleVisibility.Hover;
-
-    private void TitleVisibility_Hidden(object sender, RoutedEventArgs e)
-        => ViewModel.TitleVisibility = TitleVisibility.Hidden;
 
     private void Sort_Name(object sender, RoutedEventArgs e) => ViewModel.SortBy = SortField.Name;
 

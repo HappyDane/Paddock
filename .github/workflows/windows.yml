@@ -65,6 +65,8 @@ jobs:
       - name: Run the smoke test
         env:
           PADDOCK_SMOKE_TEST: "1"
+          # Small pictures of menus and panels in the log, from one runner only.
+          PADDOCK_SMOKE_LOG_IMAGES: ${{ matrix.os == 'windows-2025' && '1' || '0' }}
         run: ./smoke-bin/Paddock.DesktopSmoke.exe --exe app/Paddock.exe --out smoke-out
 
       - name: Upload screenshots
