@@ -1,0 +1,411 @@
+using Paddock.Core.Models;
+using Paddock.Core.Services;
+
+namespace Paddock.Core.Tests;
+
+/// <summary>
+/// The safety nets behind "a paddock's icons are never lost from sight":
+/// restarting after a crash, finding folders nothing shows, and putting
+/// everything back without Paddock running.
+/// </summary>
+public class RestartPolicyTests
+{
+    private static readonly TimeSpan Minutes5 = TimeSpan.FromMinutes(5);
+
+    [Theory]
+    [InlineData(unchecked((int)0xC0000005))] // access violation
+    [InlineData(unchecked((int)0xE0434352))] // unhandled .NET exception
+    [InlineData(unchecked((int)0x80131623))] // Environment.FailFast
+    [InlineData(unchecked((int)0xC00000FD))] // stack overflow
+    public void Crashes_AreRestarted(int exitCode)
+    {
+        var decision = RestartPolicy.Decide(exitCode, Minutes5, restartsSoFar: 0, sessionEnding: false);
+        Assert.True(decision.Restart);
+        Assert.Equal(1, decision.NextCount);
+    }
+
+    [Theory]
+    [InlineData(0)]  // tray > Exit
+    [InlineData(1)]  // Task Manager, taskkill
+    [InlineData(-1)] // Process.Kill, stopping the debugger
+    public void DeliberateExits_AreRespected(int exitCode)
+        => Assert.False(RestartPolicy.Decide(exitCode, Minutes5, 0, false).Restart);
+
+    [Fact]
+    public void NoRestart_WhileWindowsSignsOut()
+        => Assert.False(RestartPolicy.Decide(unchecked((int)0xC0000005), Minutes5, 0, sessionEnding: true).Restart);
+
+    [Fact]
+    public void ACrashRightAfterStarting_IsRetriedAfterAGrowingPause()
+    {
+        var crash = unchecked((int)0xC0000005);
+        var quick = TimeSpan.FromSeconds(3);
+
+        var first = RestartPolicy.Decide(crash, quick, 0, false);
+        var second = RestartPolicy.Decide(crash, quick, first.NextCount, false);
+
+        Assert.True(first.Restart && second.Restart);
+        Assert.True(first.Delay > TimeSpan.Zero && second.Delay > first.Delay);
+    }
+
+    [Fact]
+    public void ACrashAfterRunningAWhile_IsRestartedAtOnce()
+        => Assert.Equal(TimeSpan.Zero, RestartPolicy.Decide(unchecked((int)0xC0000005), Minutes5, 0, false).Delay);
+
+    [Fact]
+    public void AHang_IsRestartedLikeACrash()
+    {
+        var decision = RestartPolicy.DecideAfterHang(Minutes5, 0, false);
+        Assert.True(decision.Restart);
+        Assert.Equal(1, decision.NextCount);
+        Assert.False(RestartPolicy.DecideAfterHang(Minutes5, 0, sessionEnding: true).Restart);
+    }
+
+    [Fact]
+    public void RepeatedQuickCrashes_StopBeingRestarted()
+    {
+        var crash = unchecked((int)0xE0434352);
+        var count = 0;
+
+        for (var i = 0; i < RestartPolicy.MaxQuickRestarts; i++)
+        {
+            var decision = RestartPolicy.Decide(crash, TimeSpan.FromMinutes(1), count, false);
+            Assert.True(decision.Restart);
+            count = decision.NextCount;
+        }
+
+        var last = RestartPolicy.Decide(crash, TimeSpan.FromMinutes(1), count, false);
+        Assert.False(last.Restart);
+        Assert.True(last.GaveUp, "Giving up should say so, so the icons go back on the desktop.");
+        Assert.False(RestartPolicy.Decide(0, TimeSpan.FromMinutes(1), count, false).GaveUp);
+    }
+
+    [Fact]
+    public void ALongRunBetweenCrashes_StartsTheCountAgain()
+    {
+        var decision = RestartPolicy.Decide(unchecked((int)0xC0000005), TimeSpan.FromHours(2), RestartPolicy.MaxQuickRestarts, false);
+        Assert.True(decision.Restart);
+        Assert.Equal(1, decision.NextCount);
+    }
+}
+
+public class HangDetectorTests
+{
+    private const long Second = 1000;
+    private readonly HangDetector _detector = new();
+
+    /// <summary>Checks every 2 s from <paramref name="from"/> to <paramref name="to"/>; true if any said hung.</summary>
+    private bool WatchFor(long from, long to, Func<long, long> lastBeat, bool busy = false, bool debugged = false)
+    {
+        var hung = false;
+        for (var now = from; now <= to; now += 2 * Second)
+            hung |= _detector.IsHung(now, lastBeat(now), busy, debugged);
+        return hung;
+    }
+
+    [Fact]
+    public void ABeatingPaddock_IsNeverHung()
+        => Assert.False(WatchFor(0, 120 * Second, now => now - 1500));
+
+    [Fact]
+    public void SilenceForLongerThanTheThreshold_IsAHang()
+    {
+        Assert.False(WatchFor(0, 28 * Second, _ => 0));
+        Assert.True(WatchFor(30 * Second, 34 * Second, _ => 0));
+    }
+
+    [Fact]
+    public void WaitingOnPurpose_IsNotAHang_AndGetsAFreshThresholdAfter()
+    {
+        Assert.False(WatchFor(0, 300 * Second, _ => 0, busy: true));
+        Assert.False(WatchFor(302 * Second, 326 * Second, _ => 0));
+        Assert.True(WatchFor(328 * Second, 340 * Second, _ => 0));
+    }
+
+    [Fact]
+    public void ADebugger_PausesHangDetection()
+        => Assert.False(WatchFor(0, 300 * Second, _ => 0, debugged: true));
+
+    [Fact]
+    public void WakingFromSleep_IsNotAHang()
+    {
+        Assert.False(WatchFor(0, 10 * Second, now => now));
+
+        // The PC slept for an hour: the last beat is an hour old, but so is the last check.
+        var woke = 3610 * Second;
+        Assert.False(_detector.IsHung(woke, 10 * Second, false, false));
+        Assert.False(WatchFor(woke + 2 * Second, woke + 2 * Second, now => woke + 1 * Second));
+    }
+}
+
+public class HookWatchdogTests
+{
+    [Fact]
+    public void PointerMovedButTheHookHeardNothing_MeansReinstall()
+    {
+        var watchdog = new HookWatchdog();
+        Assert.False(watchdog.Check(10, 10)); // first look: nothing to compare with
+        Assert.True(watchdog.Check(50, 60));
+    }
+
+    [Fact]
+    public void AHealthyHook_IsLeftAlone()
+    {
+        var watchdog = new HookWatchdog();
+        watchdog.Check(10, 10);
+        watchdog.OnHookEvent();
+        Assert.False(watchdog.Check(50, 60));
+    }
+
+    [Fact]
+    public void AStillPointer_SaysNothingEitherWay()
+    {
+        var watchdog = new HookWatchdog();
+        watchdog.Check(10, 10);
+        Assert.False(watchdog.Check(10, 10));
+    }
+}
+
+public class StoreRecoveryTests : IDisposable
+{
+    private readonly string _root;
+    private readonly string _desktop;
+    private readonly string _settingsPath;
+    private readonly IconStore _store;
+    private readonly PaddockManager _manager;
+
+    public StoreRecoveryTests()
+    {
+        _root = Path.Combine(Path.GetTempPath(), $"paddock_recover_{Guid.NewGuid():N}");
+        _desktop = Path.Combine(_root, "Desktop");
+        Directory.CreateDirectory(_desktop);
+        _settingsPath = Path.Combine(_root, "settings.json");
+
+        _store = new IconStore(_desktop, Path.Combine(_desktop, ".Paddock"));
+        _manager = new PaddockManager(new SettingsService(_settingsPath), _store);
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_root, recursive: true); } catch { }
+    }
+
+    private string StoreFile(string folder, string name)
+    {
+        var dir = Path.Combine(_store.StoreRoot, folder);
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, name);
+        File.WriteAllText(path, "x");
+        return path;
+    }
+
+    [Fact]
+    public void FoldersNoPaddockOwns_AreFound_AndEmptyOnesTidiedAway()
+    {
+        var kept = _manager.CreatePaddock("Kept", 0, 0, 300, 250);
+        StoreFile(kept.Id, "mine.txt");
+        StoreFile("lost0001", "orphan.txt");
+        Directory.CreateDirectory(Path.Combine(_store.StoreRoot, "empty001"));
+
+        Assert.Equal(["lost0001"], _manager.FindOrphanedFolders());
+        Assert.False(Directory.Exists(Path.Combine(_store.StoreRoot, "empty001")));
+    }
+
+    [Fact]
+    public void FoldersOwnedByAnotherLayout_AreNotOrphans()
+    {
+        var settings = new SettingsService(_settingsPath);
+        settings.Settings.Corrals["work"] = new CorralModel { Name = "work", Paddocks = [new PaddockModel { Id = "work0001" }] };
+        var manager = new PaddockManager(settings, _store);
+        StoreFile("work0001", "report.pdf");
+
+        Assert.Empty(manager.FindOrphanedFolders());
+    }
+
+    [Fact]
+    public void AnAdoptedFolder_ShowsItsItemsAgain()
+    {
+        var orphan = StoreFile("lost0001", "orphan.txt");
+
+        var paddock = _manager.AdoptFolder("lost0001", "Recovered", 10, 20, 300, 250);
+        _manager.ReconcilePaddocks();
+
+        Assert.Equal("lost0001", paddock.Id);
+        var entry = Assert.Single(_manager.GetPaddock("lost0001")!.Icons);
+        Assert.Equal(orphan, entry.DesktopPath);
+        Assert.True(entry.Managed);
+        Assert.Empty(_manager.FindOrphanedFolders());
+    }
+
+    [Fact]
+    public void UnreadableSettings_LoseNoIcons()
+    {
+        var paddock = _manager.CreatePaddock("Docs", 0, 0, 300, 250);
+        _manager.AddIconToPaddock(paddock.Id, Path.Combine(_desktop, "a.pdf").Also(p => File.WriteAllText(p, "x")));
+
+        File.WriteAllText(_settingsPath, "{ this is not json");
+        var fresh = new PaddockManager(new SettingsService(_settingsPath), _store);
+
+        Assert.Equal([paddock.Id], fresh.FindOrphanedFolders());
+    }
+
+    [Fact]
+    public void RestoreEverything_PutsBackItemsSettingsNeverKnew()
+    {
+        StoreFile("p1", "a.txt");
+        StoreFile("p2", "b.txt");
+        File.WriteAllText(Path.Combine(_store.StoreRoot, "loose.txt"), "x");
+        _store.EnsureReadme();
+
+        Assert.Equal(3, _store.RestoreEverything());
+
+        Assert.True(File.Exists(Path.Combine(_desktop, "a.txt")));
+        Assert.True(File.Exists(Path.Combine(_desktop, "b.txt")));
+        Assert.True(File.Exists(Path.Combine(_desktop, "loose.txt")));
+        Assert.True(File.Exists(Path.Combine(_store.StoreRoot, IconStore.ReadmeName)), "The note should stay behind.");
+        Assert.False(File.Exists(Path.Combine(_desktop, IconStore.ReadmeName)));
+    }
+
+    [Fact]
+    public void TheReadme_IsNeverAPaddockItemOrAStray()
+    {
+        _store.EnsureReadme();
+        StoreFile("p1", "a.txt");
+
+        Assert.Empty(_store.ListStrayItems());
+        Assert.Equal(["p1"], _store.ListPaddockFolders());
+        Assert.Contains("--restore-all", File.ReadAllText(Path.Combine(_store.StoreRoot, IconStore.ReadmeName)));
+    }
+}
+
+internal static class TestExtensions
+{
+    internal static T Also<T>(this T value, Action<T> action)
+    {
+        action(value);
+        return value;
+    }
+}
+
+/// <summary>
+/// Each paddock folder describes its paddock, so the folders alone rebuild
+/// the layout when settings.json is lost — and a deleted paddock never returns.
+/// </summary>
+public class FolderMetadataTests : IDisposable
+{
+    private readonly string _root;
+    private readonly string _desktop;
+    private readonly string _settingsPath;
+    private readonly IconStore _store;
+    private readonly PaddockManager _manager;
+
+    public FolderMetadataTests()
+    {
+        _root = Path.Combine(Path.GetTempPath(), $"paddock_meta_{Guid.NewGuid():N}");
+        _desktop = Path.Combine(_root, "Desktop");
+        Directory.CreateDirectory(_desktop);
+        _settingsPath = Path.Combine(_root, "settings.json");
+
+        _store = new IconStore(_desktop, Path.Combine(_desktop, ".Paddock"));
+        _manager = new PaddockManager(new SettingsService(_settingsPath), _store);
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_root, recursive: true); } catch { }
+    }
+
+    private string DesktopFile(string name)
+    {
+        var path = Path.Combine(_desktop, name);
+        File.WriteAllText(path, "x");
+        return path;
+    }
+
+    private string MetadataPath(string id) => Path.Combine(_store.GetPaddockFolder(id), IconStore.MetadataName);
+
+    [Fact]
+    public void SavingWritesEachPaddocksDescription_IntoItsFolder()
+    {
+        var docs = _manager.CreatePaddock("Docs", 40, 50, 320, 240);
+
+        var saved = SettingsService.FromJson<PaddockModel>(File.ReadAllText(MetadataPath(docs.Id)));
+
+        Assert.NotNull(saved);
+        Assert.Equal(("Docs", 40.0, 50.0, 320.0, 240.0), (saved!.Title, saved.X, saved.Y, saved.Width, saved.Height));
+        Assert.Empty(saved.Icons);
+    }
+
+    [Fact]
+    public void ADescriptionIsRewrittenOnlyWhenItChanges()
+    {
+        var docs = _manager.CreatePaddock("Docs", 0, 0, 300, 250);
+        var path = MetadataPath(docs.Id);
+        File.SetLastWriteTimeUtc(path, new DateTime(2020, 1, 1));
+
+        _manager.AddIconToPaddock(docs.Id, DesktopFile("a.pdf")); // icons are not part of it
+        Assert.Equal(new DateTime(2020, 1, 1), File.GetLastWriteTimeUtc(path));
+
+        docs.Title = "Papers";
+        _manager.SaveLayout();
+        Assert.Contains("Papers", File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void TheDescription_IsNeverAnItem_NorOverwrittenByOne()
+    {
+        var docs = _manager.CreatePaddock("Docs", 0, 0, 300, 250);
+        var lookalike = DesktopFile(IconStore.MetadataName);
+
+        var entry = _manager.AddIconToPaddock(docs.Id, lookalike);
+
+        Assert.NotNull(entry);
+        Assert.NotEqual(IconStore.MetadataName, Path.GetFileName(entry!.DesktopPath));
+        Assert.Equal([entry.DesktopPath], _store.ListPaddockItems(docs.Id));
+        Assert.Contains("Docs", File.ReadAllText(MetadataPath(docs.Id)));
+    }
+
+    [Fact]
+    public void LostSettings_RebuildThePaddocksFromTheirFolders()
+    {
+        var docs = _manager.CreatePaddock("Docs", 40, 50, 320, 240);
+        docs.Style.BackgroundColor = "#1E4F8A";
+        _manager.SaveLayout();
+        _manager.AddIconToPaddock(docs.Id, DesktopFile("a.pdf"));
+        var empty = _manager.CreatePaddock("Empty one", 400, 50, 300, 250);
+
+        File.WriteAllText(_settingsPath, "{ not json");
+        var fresh = new PaddockManager(new SettingsService(_settingsPath), _store);
+
+        var orphans = fresh.FindOrphanedFolders();
+        Assert.Equal(new[] { docs.Id, empty.Id }.Order(), orphans.Order());
+
+        foreach (var id in orphans)
+            Assert.NotNull(fresh.RestoreFromFolder(id));
+        fresh.ReconcilePaddocks();
+
+        var rebuilt = fresh.GetPaddock(docs.Id)!;
+        Assert.Equal(("Docs", 40.0, 50.0, "#1E4F8A"), (rebuilt.Title, rebuilt.X, rebuilt.Y, rebuilt.Style.BackgroundColor));
+        Assert.Single(rebuilt.Icons);
+        Assert.Equal("Empty one", fresh.GetPaddock(empty.Id)!.Title);
+    }
+
+    [Fact]
+    public void ADeletedPaddock_DoesNotComeBack_EvenIfItsFolderStays()
+    {
+        var docs = _manager.CreatePaddock("Docs", 0, 0, 300, 250);
+        var folder = _store.GetPaddockFolder(docs.Id);
+
+        // Something keeps the folder from being removed (a stray file that will not move, say).
+        Directory.CreateDirectory(Path.Combine(folder, "stuck"));
+        _manager.DeletePaddock(docs.Id);
+        Directory.CreateDirectory(folder);
+
+        Assert.False(File.Exists(MetadataPath(docs.Id)));
+        Assert.Null(_manager.RestoreFromFolder(docs.Id));
+    }
+
+    [Fact]
+    public void ExitingOnPurpose_IsNeverRestarted_WhateverTheExitCode()
+        => Assert.False(RestartPolicy.Decide(unchecked((int)0xC0000005), TimeSpan.FromMinutes(5), 0, false, exitedOnPurpose: true).Restart);
+}

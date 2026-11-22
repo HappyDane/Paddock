@@ -97,6 +97,37 @@ public class LayoutEngine
 
     public const double MinPaddockHeight = 32;
 
+    /// <summary>
+    /// A place for a new paddock of the given size where it overlaps no
+    /// existing one (keeping <paramref name="gap"/> clear around each), for
+    /// paddocks Paddock creates by itself. It looks from the top-right corner
+    /// down and then leftwards, because desktop icons fill from the top-left.
+    /// Returns <c>null</c> when the region is full.
+    /// </summary>
+    public (double X, double Y)? FindFreeSpot(
+        IEnumerable<PaddockModel> existing,
+        LayoutBounds bounds,
+        double width,
+        double height,
+        double gap = 12,
+        double step = 20)
+    {
+        var taken = existing.Select(p => (p.X - gap, p.Y - gap, p.X + p.Width + gap, p.Y + (p.IsRolledUp ? MinPaddockHeight : p.Height) + gap)).ToList();
+        step = Math.Max(1, step);
+
+        for (var x = bounds.Right - gap - width; x >= bounds.Left + gap - 0.001; x -= step)
+        {
+            for (var y = bounds.Top + gap; y + height <= bounds.Bottom - gap + 0.001; y += step)
+            {
+                var clear = taken.All(t => x + width <= t.Item1 || x >= t.Item3 || y + height <= t.Item2 || y >= t.Item4);
+                if (clear)
+                    return (x, y);
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>Clamps a single paddock into the given region.</summary>
     public void ClampToBounds(PaddockModel paddock, LayoutBounds bounds)
     {

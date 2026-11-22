@@ -20,6 +20,7 @@ public sealed class DesktopIconService : IDisposable
 
     private static readonly string[] IgnoredNames = ["desktop.ini", "thumbs.db"];
 
+    private readonly object _watchGate = new();
     private FileSystemWatcher? _watcher;
     private System.Timers.Timer? _debounce;
     private Action? _onStoreChanged;
@@ -47,11 +48,17 @@ public sealed class DesktopIconService : IDisposable
     public IconStore CreateIconStore()
     {
         EnsureHiddenStoreRoot();
-        return new IconStore(DesktopRoot, StoreRoot, CommonDesktopRoot);
+        var store = new IconStore(DesktopRoot, StoreRoot, CommonDesktopRoot);
+        store.EnsureReadme();
+        return store;
     }
 
-    /// <summary>Removes originals from the all-users desktop, asking for permission when needed.</summary>
-    public ISharedDesktopRemover CreateSharedDesktopRemover() => new SharedDesktopRemover(CommonDesktopRoot);
+    /// <summary>
+    /// Removes originals from the all-users desktop, asking for permission when
+    /// needed; <paramref name="waits"/> hears about the wait for the answer.
+    /// </summary>
+    public ISharedDesktopRemover CreateSharedDesktopRemover(IWaitAnnouncer? waits = null)
+        => new SharedDesktopRemover(CommonDesktopRoot, waits);
 
     /// <summary>
     /// Top-level items shown on this user's desktop — files and folders, minus
@@ -108,6 +115,81 @@ public sealed class DesktopIconService : IDisposable
     public IReadOnlyList<DesktopIconSpot> GetIconSpots() => DesktopFolderView.GetIconSpots();
 
     /// <summary>
+    /// Whether the desktop's own icons are showing, or <c>null</c> when the
+    /// desktop's icon view cannot be found.
+    /// </summary>
+    public bool? AreDesktopIconsShown()
+    {
+        var listView = DesktopListView.Find();
+        return listView == IntPtr.Zero ? null : NativeMethods.IsWindowVisible(listView);
+    }
+
+    /// <summary>
+    /// Shows or hides the desktop's own icons the way the desktop menu's
+    /// View → Show desktop icons does (Explorer remembers it, and the user can
+    /// always undo it from that menu). Returns true when the icons end up in
+    /// the requested state.
+    /// </summary>
+    public bool SetDesktopIconsShown(bool shown)
+    {
+        var listView = DesktopListView.Find();
+        if (listView == IntPtr.Zero)
+            return false;
+
+        if (NativeMethods.IsWindowVisible(listView) == shown)
+            return true;
+
+        var view = NativeMethods.GetParent(listView);
+        var answered = NativeMethods.SendMessageTimeoutW(
+            view,
+            NativeMethods.WM_COMMAND,
+            NativeMethods.DesktopToggleIconsCommand,
+            IntPtr.Zero,
+            NativeMethods.SMTO_ABORTIFHUNG,
+            2000,
+            out _) != IntPtr.Zero;
+
+        var now = NativeMethods.IsWindowVisible(listView);
+        if (now != shown)
+            Log.Warn($"Could not {(shown ? "show" : "hide")} the desktop icons (Explorer {(answered ? "ignored" : "did not answer")} the request).");
+
+        return now == shown;
+    }
+
+    /// <summary>The user's Downloads folder (wherever they moved it).</summary>
+    public static string DownloadsFolder
+    {
+        get
+        {
+            try
+            {
+                if (NativeMethods.SHGetKnownFolderPath(NativeMethods.FOLDERID_Downloads, 0, IntPtr.Zero, out var pointer) == 0)
+                {
+                    try
+                    {
+                        var path = System.Runtime.InteropServices.Marshal.PtrToStringUni(pointer);
+                        if (!string.IsNullOrEmpty(path))
+                            return path;
+                    }
+                    finally
+                    {
+                        System.Runtime.InteropServices.Marshal.FreeCoTaskMem(pointer);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Cannot look up the Downloads folder: {ex.Message}");
+            }
+
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        }
+    }
+
+    /// <summary>Watches for items arriving on the desktop, for the auto-organize rules.</summary>
+    public DesktopArrivalWatcher CreateArrivalWatcher() => new(DesktopRoot, StoreRoot);
+
+    /// <summary>
     /// Watches the store for changes made outside the app (files dropped into a
     /// paddock folder from Explorer, items deleted, and so on). The callback is
     /// debounced and raised on a background thread — marshal to the UI yourself.
@@ -115,17 +197,52 @@ public sealed class DesktopIconService : IDisposable
     public void WatchStore(Action onChanged)
     {
         _onStoreChanged = onChanged;
+        _debounce ??= new System.Timers.Timer(400) { AutoReset = false };
+        _debounce.Elapsed -= OnDebounceElapsed;
+        _debounce.Elapsed += OnDebounceElapsed;
+
+        StartStoreWatcher();
+    }
+
+    /// <summary>
+    /// Makes sure the store is still being watched — that the folder exists
+    /// (the user may have deleted it) and the watcher has not stopped. Cheap;
+    /// called periodically. A restarted watcher also asks for a re-sync, since
+    /// changes may have gone unseen.
+    /// </summary>
+    public void EnsureStoreWatched()
+    {
+        if (_onStoreChanged is null)
+            return;
+
+        if (Directory.Exists(StoreRoot) && _watcher is { EnableRaisingEvents: true })
+            return;
+
+        Log.Warn("The paddock store was no longer being watched; watching it again.");
+        StartStoreWatcher();
+        _onStoreChanged?.Invoke();
+    }
+
+    private void StartStoreWatcher()
+    {
+        lock (_watchGate)
+        {
+            StartStoreWatcherLocked();
+        }
+    }
+
+    private void StartStoreWatcherLocked()
+    {
+        StopStoreWatcherLocked();
 
         try
         {
             EnsureHiddenStoreRoot();
 
-            _debounce = new System.Timers.Timer(400) { AutoReset = false };
-            _debounce.Elapsed += (_, _) => _onStoreChanged?.Invoke();
-
             _watcher = new FileSystemWatcher(StoreRoot)
             {
                 IncludeSubdirectories = true,
+                InternalBufferSize = 64 * 1024,
                 NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName,
                 EnableRaisingEvents = true
             };
@@ -133,12 +250,52 @@ public sealed class DesktopIconService : IDisposable
             _watcher.Created += OnStoreEvent;
             _watcher.Deleted += OnStoreEvent;
             _watcher.Renamed += OnStoreEvent;
+            _watcher.Error += OnStoreError;
         }
         catch (Exception ex)
         {
             Log.Error($"Cannot watch '{StoreRoot}' for changes.", ex);
         }
     }
+
+    private void StopStoreWatcher()
+    {
+        lock (_watchGate)
+        {
+            StopStoreWatcherLocked();
+        }
+    }
+
+    private void StopStoreWatcherLocked()
+    {
+        if (_watcher is null)
+            return;
+
+        _watcher.EnableRaisingEvents = false;
+        _watcher.Created -= OnStoreEvent;
+        _watcher.Deleted -= OnStoreEvent;
+        _watcher.Renamed -= OnStoreEvent;
+        _watcher.Error -= OnStoreError;
+        _watcher.Dispose();
+        _watcher = null;
+    }
+
+    /// <summary>
+    /// Too many changes at once (the watcher's buffer overflowed) or the
+    /// folder went away: some changes were missed. Re-sync from disk, and
+    /// start watching afresh if the watcher gave up.
+    /// </summary>
+    private void OnStoreError(object sender, ErrorEventArgs e)
+    {
+        Log.Warn($"Missed some changes in the paddock store ({e.GetException().Message}); re-reading it.");
+
+        if (_watcher is { EnableRaisingEvents: false } || !Directory.Exists(StoreRoot))
+            StartStoreWatcher();
+
+        _onStoreChanged?.Invoke();
+    }
+
+    private void OnDebounceElapsed(object? sender, System.Timers.ElapsedEventArgs e) => _onStoreChanged?.Invoke();
 
     /// <summary>
     /// Tells the shell a folder's contents changed, so the desktop redraws
@@ -169,15 +326,7 @@ public sealed class DesktopIconService : IDisposable
 
     public void Dispose()
     {
-        if (_watcher is not null)
-        {
-            _watcher.EnableRaisingEvents = false;
-            _watcher.Created -= OnStoreEvent;
-            _watcher.Deleted -= OnStoreEvent;
-            _watcher.Renamed -= OnStoreEvent;
-            _watcher.Dispose();
-            _watcher = null;
-        }
+        StopStoreWatcher();
 
         _debounce?.Dispose();
         _debounce = null;

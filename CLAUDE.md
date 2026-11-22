@@ -32,8 +32,10 @@ tests/
 ## How the desktop integration works (read before touching it)
 - **One window per paddock.** There is deliberately no full-screen overlay: empty
   desktop space belongs to the shell, so right-click, rubber-band selection and
-  icon dragging keep working. The only full-screen window is `DrawAreaWindow`,
-  shown for the moment the user draws a new paddock.
+  icon dragging keep working. The only full-screen windows are transient:
+  `DrawAreaWindow` (drawing a new paddock from the tray) and `EyedropperWindow`
+  (picking a colour — it shows a snapshot taken just before it opened, so it is
+  never in its own picture).
 - **Z-order, not parenting.** Do *not* `SetParent` into `WorkerW` — a window there
   renders behind the desktop icons and gets no mouse input. `ShellHookService`
   instead keeps each window *directly above* the window hosting `SHELLDLL_DefView`,
@@ -60,12 +62,68 @@ tests/
   icon), and replays a plain right-click so Explorer's desktop menu still opens.
   The state machine is `Core/DesktopDrawGesture` (unit-tested). Left-drag stays
   the desktop's rubber-band selection. Keep the hook callback fast.
+- **Double-click on empty desktop hides paddocks** — and, by default, the
+  desktop's own icons (Explorer's View → Show desktop icons, `WM_COMMAND 0x7402`
+  to `SHELLDLL_DefView`). The same hook *watches* left presses (never swallows
+  them): `Core/DesktopDoubleClick` applies Windows' double-click rule using only
+  a window-class check in the callback; the cross-process "was it on an icon?"
+  `LVM_HITTEST` runs afterwards on the hook thread's own message loop. While the
+  icons are hidden, `settings.json` says so (`desktopIconsHiddenByPaddock`), and
+  the next start shows them again — a crash must never leave a desktop empty.
 - **A new paddock collects the icons it was drawn over.** Positions and real
   file paths come from Explorer's own folder view (`DesktopFolderView`:
   IShellWindows → desktop IShellBrowser → IFolderView), never from icon labels,
   which hide extensions. Cross-process COM: call it off the UI thread. Which
   icons count is `Core/DesktopLayout.ItemsUnder` (centre inside; never
   Paddock's own store folder).
+- **Auto-organize rules route new desktop items** (`Core/AutoSortRules`, first
+  match wins). `Shell/DesktopArrivalWatcher` is one *recursive* watcher on the
+  Desktop, which covers `.Paddock` too. A move out of a paddock reaches it as
+  "removed from the store, added to the desktop", so what leaves the store is
+  remembered and an item the user drags out is **never** sent back; so are
+  items Paddock returns (`IconStore.PlacedOnDesktop`) and anything dropped
+  during a drag out of a paddock (`ExpectItemsFromPaddock`, copies and new
+  shortcuts included). An item taking the name of one that just left the
+  desktop is an app *saving* (Office renames a temp file over the original),
+  not a new item. Verdicts are kept on the pending item, not re-derived later.
+  An item is only judged after 1.5 s of quiet, when it can be opened for
+  DELETE (not still downloading/copying), is not an empty placeholder, and
+  nobody is renaming an item in a shell view. Rules only ever *move* items on
+  the user's own desktop (`PaddockManager.MoveDesktopItemsIntoPaddock`).
+- **Icons must never end up out of sight.** While Paddock is not running, the
+  icons in paddocks are not on the desktop, so:
+  - `Program.Main` is the one place that decides what a Paddock.exe process
+    is: the watchdog, the elevated all-users-desktop helper, `--restore-all`
+    (all before WPF loads), or the app. Each app process is watched by a small
+    watchdog process (`Shell/CrashWatchdog`), which `App/Services/Supervision`
+    starts — and starts again if it goes. Supervision also keeps the UI
+    thread's heartbeat in shared memory (`Shell/AppHeartbeat`, every 2 s at
+    input priority) and, first thing in `OnExit`, says Paddock is closing *on
+    purpose*. The watchdog trusts that word; without it, a crash exit code means
+    restart and a Task Manager / `Kill()` end does not. 30 s without a heartbeat
+    (`Core/HangDetector`; not in the first minute, under a debugger, or just
+    after sleep) means frozen: ended and restarted. **A wait that blocks the UI
+    thread on purpose must be announced** through the `IWaitAnnouncer` it is
+    given (`Supervision.Waits`) — the permission prompt for all-users desktop
+    items is. Start-up crashes are retried after 2/10/30 s; after 3 quick
+    restarts it gives up, puts every icon back on the desktop and says so
+    (`Core/RestartPolicy`).
+  - Every paddock folder keeps a hidden `.paddock.json`: its paddock minus the
+    icons (written after each settings save, only when changed). Without
+    settings.json the folders alone rebuild the layout. The name is reserved —
+    never an item, never overwritten by one — and deleting a paddock removes it
+    first, so a folder that will not go away comes back as "Recovered", never as
+    the paddock that was closed.
+  - On startup, a store folder no paddock owns in *any* profile (unreadable
+    settings, a hand-edited file) gets its paddock back — rebuilt from its
+    `.paddock.json`, or else as "Recovered" — and items loose in the store root
+    go back to the desktop (`PaddockHost.RecoverLostIcons`).
+  - `Paddock.exe --restore-all [--quiet]` empties the whole store onto the desktop
+    without settings or a running Paddock; `.Paddock\README.txt` says so.
+  - Self-healing: paddocks re-sync with their folders every minute and when the
+    store watcher overflows or stops; the mouse hook is reinstalled if the pointer
+    moves while it hears nothing (`Core/HookWatchdog` — Windows silently drops
+    slow low-level hooks).
 - **Drops are read in the OLE callback, applied after it.** And after dragging an
   icon *out*, Paddock never moves the file itself: the drop target (Explorer)
   does, and the store watcher notices. Moving it too races Explorer.
@@ -85,8 +143,14 @@ dotnet test                           # Run all tests
 single-file `Paddock.exe` (downloadable artifact `Paddock-win-x64`), then
 `tests/Paddock.DesktopSmoke` against that exe on Windows Server 2022 and 2025.
 The smoke test uses real mouse input and UI Automation to drag desktop icons
-in and out, sort, click under an app window, press Win+D, restart and remove a
-paddock, checking files, `settings.json`, what is on screen, and `paddock.log`.
+in and out, sort, click under an app window, press Win+D, double-click the
+desktop to hide and show, pick a wallpaper pixel with the eyedropper, turn on
+frosted glass and a tint, let an auto-organize rule route a new file (and not
+an Office-style save, nor an item dragged back out), restart and remove a
+paddock, rebuild paddocks from folders `settings.json` forgot, survive a crash and a frozen
+UI thread (the watchdog restarts it), and `--restore-all` with Paddock closed —
+checking files,
+`settings.json`, what is on screen, and `paddock.log`.
 Screenshots of every step (and of every failure) are uploaded as artifacts.
 Run it locally only on a throwaway machine: it moves desktop files and wipes
 Paddock's settings, and refuses to start without `PADDOCK_SMOKE_TEST=1`.
@@ -139,9 +203,14 @@ Requires the Windows Application Packaging Project tooling. It is deliberately
 3. Register the service in `App.xaml.cs`
 
 ### Changing how paddocks look
-Per-paddock look lives in `PaddockStyle` (colour, opacity, `IconSize`, `Font`)
-and is edited in `Views/AppearancePanel` (a popover opened from the paddock's
-menu). Text colour is derived, never stored: `ColorContrast.PrefersDarkText`
+Per-paddock look lives in `PaddockStyle` (colour, opacity, `FrostedGlass`,
+`IconTint`/`IconTintStrength`, `IconSize`, `Font`) and is edited in
+`Views/AppearancePanel` (a popover opened from the paddock's menu). Frosted
+glass is the compositor's blur behind the window (`WindowStyles.SetBlurBehind`)
+plus a rounded window region so the blur follows the corners — `PaddockWindow`
+re-applies the region on every resize. Icon tint is the W3C "color" blend
+(`Core/IconTint`, unit-tested) applied to a copy of each icon bitmap
+(`Helpers/TintedIcons`, cached per bitmap). Text colour is derived, never stored: `ColorContrast.PrefersDarkText`
 picks light or dark labels for the paddock's colour and opacity. App-wide menu
 and tooltip styling is `Resources/Controls.xaml`, coloured by the active theme
 dictionary — keep both themes' keys in step. There is deliberately no close

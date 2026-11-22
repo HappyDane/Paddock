@@ -21,7 +21,34 @@ namespace Paddock.Core.Services;
 /// </summary>
 public class IconStore
 {
-    private static readonly string[] IgnoredNames = ["desktop.ini", "thumbs.db"];
+    /// <summary>
+    /// A paddock's own description (title, place, look), kept hidden in its
+    /// folder so that the folder alone is enough to rebuild the paddock if
+    /// settings.json is ever lost. Never an item, and never overwritten by one.
+    /// </summary>
+    public const string MetadataName = ".paddock.json";
+
+    private const string MetadataTempName = ".paddock.json.tmp";
+
+    private static readonly string[] IgnoredNames = ["desktop.ini", "thumbs.db", MetadataName, MetadataTempName];
+
+    /// <summary>The note at the top of the store that says what it is and how to get everything back.</summary>
+    public const string ReadmeName = "README.txt";
+
+    private const string ReadmeText =
+        """
+        This folder belongs to Paddock, the desktop organizer.
+
+        The icons you put in a paddock are kept here, one folder per paddock -
+        that is what takes them off the desktop. Nothing in here is ever deleted.
+
+        To put every icon back on the desktop:
+          - with Paddock running: tray icon > Restore All Icons to Desktop
+          - without it:           run   Paddock.exe --restore-all
+          - or by hand:           move the files out of these folders onto your desktop
+
+        Whenever Paddock is running, it shows these icons in their paddocks.
+        """;
 
     public IconStore(string desktopRoot, string storeRoot, string? sharedDesktopRoot = null)
     {
@@ -44,6 +71,13 @@ public class IconStore
 
     /// <summary>Parent folder holding one subfolder per paddock.</summary>
     public string StoreRoot { get; }
+
+    /// <summary>
+    /// Raised with the new path whenever the store puts an item back on the
+    /// desktop — so the auto-organize rules can tell an item Paddock returned
+    /// from one that just arrived, and leave it where it is.
+    /// </summary>
+    public event Action<string>? PlacedOnDesktop;
 
     public string GetPaddockFolder(string paddockId)
         => Path.Combine(StoreRoot, paddockId);
@@ -196,6 +230,7 @@ public class IconStore
             Directory.CreateDirectory(DesktopRoot);
             var target = GetAvailablePath(DesktopRoot, Path.GetFileName(source));
             MoveItem(source, target);
+            PlacedOnDesktop?.Invoke(target);
             return target;
         }
         catch (Exception ex)
@@ -203,6 +238,163 @@ public class IconStore
             Log.Error($"Could not move '{source}' back to the desktop.", ex);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Writes the store's README (what this folder is, how to get the icons
+    /// back without Paddock) unless it is already there.
+    /// </summary>
+    public void EnsureReadme()
+    {
+        try
+        {
+            Directory.CreateDirectory(StoreRoot);
+            var path = Path.Combine(StoreRoot, ReadmeName);
+            if (!File.Exists(path))
+                File.WriteAllText(path, ReadmeText.ReplaceLineEndings("\r\n"));
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not write the note in '{StoreRoot}': {ex.Message}");
+        }
+    }
+
+    /// <summary>Writes a paddock's description into its folder (atomically, hidden).</summary>
+    public void WriteMetadata(string paddockId, string json)
+    {
+        try
+        {
+            var folder = EnsurePaddockFolder(paddockId);
+            var path = Path.Combine(folder, MetadataName);
+            var temp = Path.Combine(folder, MetadataTempName);
+
+            File.WriteAllText(temp, json);
+            File.Move(temp, path, overwrite: true);
+            File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.Hidden);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not write the description of paddock '{paddockId}': {ex.Message}");
+        }
+    }
+
+    /// <summary>A paddock's description from its folder, or null when there is none.</summary>
+    public string? ReadMetadata(string paddockId)
+    {
+        try
+        {
+            var path = Path.Combine(GetPaddockFolder(paddockId), MetadataName);
+            return File.Exists(path) ? File.ReadAllText(path) : null;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not read the description of paddock '{paddockId}': {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Removes a paddock's description: it is being deleted, and must not
+    /// come back from its folder if the folder cannot be removed.
+    /// </summary>
+    public void DeleteMetadata(string paddockId)
+    {
+        try
+        {
+            var path = Path.Combine(GetPaddockFolder(paddockId), MetadataName);
+            if (File.Exists(path))
+            {
+                File.SetAttributes(path, FileAttributes.Normal);
+                File.Delete(path);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not remove the description of paddock '{paddockId}': {ex.Message}");
+        }
+    }
+
+    /// <summary>The names (paddock ids) of the folders in the store.</summary>
+    public IReadOnlyList<string> ListPaddockFolders()
+    {
+        if (!Directory.Exists(StoreRoot))
+            return [];
+
+        try
+        {
+            return Directory.EnumerateDirectories(StoreRoot).Select(Path.GetFileName).OfType<string>().ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not list the paddock folders: {ex.Message}");
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Items sitting loose at the top of the store, in no paddock's folder
+    /// (dropped there by hand, say) — nothing would ever show them.
+    /// </summary>
+    public IReadOnlyList<string> ListStrayItems()
+    {
+        if (!Directory.Exists(StoreRoot))
+            return [];
+
+        try
+        {
+            return Directory.EnumerateFiles(StoreRoot)
+                .Where(p => !IsIgnored(p) && !string.Equals(Path.GetFileName(p), ReadmeName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not list the paddock store: {ex.Message}");
+            return [];
+        }
+    }
+
+    /// <summary>Removes a paddock folder that has nothing in it. Never removes one that does.</summary>
+    public void RemoveFolderIfEmpty(string paddockId)
+    {
+        var folder = GetPaddockFolder(paddockId);
+
+        try
+        {
+            if (Directory.Exists(folder) && !Directory.EnumerateFileSystemEntries(folder).Any())
+                Directory.Delete(folder);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not remove the empty folder '{folder}': {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Moves every item in the store — in any paddock's folder, or loose —
+    /// back onto the desktop, whether or not Paddock knows about it. The
+    /// folders stay. For <c>Paddock.exe --restore-all</c>: it needs neither
+    /// settings.json nor a running Paddock. Returns how many items moved.
+    /// </summary>
+    public int RestoreEverything()
+    {
+        var moved = 0;
+
+        foreach (var id in ListPaddockFolders())
+        {
+            foreach (var item in ListPaddockItems(id))
+            {
+                if (MoveToDesktop(item) is not null)
+                    moved++;
+            }
+        }
+
+        foreach (var stray in ListStrayItems())
+        {
+            if (MoveToDesktop(stray) is not null)
+                moved++;
+        }
+
+        return moved;
     }
 
     /// <summary>Lists the items physically present in a paddock's folder.</summary>
@@ -234,6 +426,10 @@ public class IconStore
     /// </summary>
     public void EvacuatePaddock(string paddockId)
     {
+        // First, so that a folder left behind (an item that would not move)
+        // comes back as "Recovered", never as the paddock that was deleted.
+        DeleteMetadata(paddockId);
+
         foreach (var item in ListPaddockItems(paddockId))
         {
             MoveToDesktop(item);
@@ -256,6 +452,11 @@ public class IconStore
     public static bool ItemExists(string path)
         => !string.IsNullOrWhiteSpace(path) && (File.Exists(path) || Directory.Exists(path));
 
+    /// <summary>Names Paddock keeps for itself inside a paddock folder; an item never gets one.</summary>
+    private static bool IsReserved(string fileName)
+        => string.Equals(fileName, MetadataName, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(fileName, MetadataTempName, StringComparison.OrdinalIgnoreCase);
+
     private static bool IsIgnored(string path)
     {
         var name = Path.GetFileName(path);
@@ -277,7 +478,7 @@ public class IconStore
     private static string GetAvailablePath(string folder, string fileName)
     {
         var candidate = Path.Combine(folder, fileName);
-        if (!ItemExists(candidate))
+        if (!ItemExists(candidate) && !IsReserved(fileName))
             return candidate;
 
         var stem = Path.GetFileNameWithoutExtension(fileName);

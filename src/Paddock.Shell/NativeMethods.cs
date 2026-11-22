@@ -413,6 +413,173 @@ internal static partial class NativeMethods
     internal const int WS_EX_TRANSPARENT = 0x00000020;
     internal const int WS_EX_NOACTIVATE = 0x08000000;
 
+    // -- Frosted glass (blur behind a window) --
+
+    /// <summary>
+    /// The DWM accent policy behind Windows 10/11's own blurred surfaces (Start,
+    /// the taskbar). Undocumented but stable since Windows 10; when the export
+    /// is missing the call simply fails and paddocks stay plain.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct AccentPolicy
+    {
+        internal int AccentState;
+        internal int AccentFlags;
+        internal int GradientColor;
+        internal int AnimationId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct WindowCompositionAttributeData
+    {
+        internal int Attribute;
+        internal IntPtr Data;
+        internal int SizeOfData;
+    }
+
+    internal const int WCA_ACCENT_POLICY = 19;
+    internal const int ACCENT_DISABLED = 0;
+    internal const int ACCENT_ENABLE_BLURBEHIND = 3;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
+
+    [LibraryImport("gdi32.dll")]
+    internal static partial IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int widthEllipse, int heightEllipse);
+
+    /// <summary>On success the system owns the region: do not delete it.</summary>
+    [LibraryImport("user32.dll")]
+    internal static partial int SetWindowRgn(IntPtr hwnd, IntPtr region, [MarshalAs(UnmanagedType.Bool)] bool redraw);
+
+    [LibraryImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool DeleteObject(IntPtr handle);
+
+    // -- The crash watchdog --
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool CheckRemoteDebuggerPresent(IntPtr process, [MarshalAs(UnmanagedType.Bool)] out bool debuggerPresent);
+
+    internal const uint MB_ICONWARNING = 0x30;
+    internal const uint MB_SETFOREGROUND = 0x10000;
+    internal const uint MB_TOPMOST = 0x40000;
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    internal static extern int MessageBoxW(IntPtr owner, string text, string caption, uint type);
+
+    // -- Keeping the low-level mouse hook alive --
+
+    internal const uint WM_TIMER = 0x0113;
+
+    [LibraryImport("user32.dll")]
+    internal static partial nuint SetTimer(IntPtr hwnd, nuint id, uint elapseMs, IntPtr timerProc);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool KillTimer(IntPtr hwnd, nuint id);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetCursorPos(out POINT point);
+
+    // -- Double-clicks and desktop icon visibility --
+
+    internal const int SM_CXDOUBLECLK = 36;
+    internal const int SM_CYDOUBLECLK = 37;
+
+    [LibraryImport("user32.dll")]
+    internal static partial uint GetDoubleClickTime();
+
+    internal const uint WM_COMMAND = 0x0111;
+
+    /// <summary>
+    /// The command behind the desktop menu's View → Show desktop icons, sent
+    /// to SHELLDLL_DefView. It toggles; check the icon view's visibility first.
+    /// </summary>
+    internal const int DesktopToggleIconsCommand = 0x7402;
+
+    /// <summary>Returns the edit box while an item in a list view is being renamed, else zero.</summary>
+    internal const uint LVM_GETEDITCONTROL = 0x1000 + 24;
+
+    // -- Can a file be moved right now? --
+
+    internal const uint DELETE = 0x00010000;
+    internal const uint FILE_SHARE_READ = 0x1;
+    internal const uint FILE_SHARE_WRITE = 0x2;
+    internal const uint FILE_SHARE_DELETE = 0x4;
+    internal const uint OPEN_EXISTING = 3;
+    internal const int ERROR_SHARING_VIOLATION = 32;
+
+    [LibraryImport("kernel32.dll", EntryPoint = "CreateFileW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial Microsoft.Win32.SafeHandles.SafeFileHandle CreateFile(
+        string fileName, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+
+    // -- Is someone renaming an item in a shell view? --
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GUITHREADINFO
+    {
+        internal int cbSize;
+        internal int flags;
+        internal IntPtr hwndActive;
+        internal IntPtr hwndFocus;
+        internal IntPtr hwndCapture;
+        internal IntPtr hwndMenuOwner;
+        internal IntPtr hwndMoveSize;
+        internal IntPtr hwndCaret;
+        internal int caretLeft;
+        internal int caretTop;
+        internal int caretRight;
+        internal int caretBottom;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetGUIThreadInfo(uint threadId, ref GUITHREADINFO info);
+
+    [LibraryImport("user32.dll")]
+    internal static partial IntPtr GetForegroundWindow();
+
+    // -- Known folders and shortcuts --
+
+    internal static readonly Guid FOLDERID_Downloads = new("374DE290-123F-4565-9164-39C4925E467B");
+
+    [DllImport("shell32.dll")]
+    internal static extern int SHGetKnownFolderPath([MarshalAs(UnmanagedType.LPStruct)] Guid folderId, uint flags, IntPtr token, out IntPtr path);
+
+    internal static readonly Guid CLSID_ShellLink = new("00021401-0000-0000-C000-000000000046");
+
+    internal const uint SLGP_RAWPATH = 0x4;
+
+    /// <summary>
+    /// IShellLinkW, declared up to the methods Paddock uses so the vtable
+    /// slots line up. Reading a shortcut this way never resolves it, so it
+    /// never searches the disk or touches the network.
+    /// </summary>
+    [ComImport]
+    [Guid("000214F9-0000-0000-C000-000000000046")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShellLinkW
+    {
+        [PreserveSig] int GetPath([MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder file, int maxPath, IntPtr findData, uint flags);
+
+        [PreserveSig] int GetIDList(out IntPtr pidl);
+
+        [PreserveSig] int SetIDList(IntPtr pidl);
+
+        [PreserveSig] int GetDescription([MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder name, int maxName);
+
+        [PreserveSig] int SetDescription([MarshalAs(UnmanagedType.LPWStr)] string name);
+
+        [PreserveSig] int GetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder dir, int maxPath);
+
+        [PreserveSig] int SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string dir);
+
+        [PreserveSig] int GetArguments([MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder args, int maxPath);
+    }
+
     // -- Shell change notification --
 
     internal const int SHCNE_UPDATEDIR = 0x00001000;

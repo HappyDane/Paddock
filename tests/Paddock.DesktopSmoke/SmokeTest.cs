@@ -17,6 +17,12 @@ namespace Paddock.DesktopSmoke;
 internal sealed class SmokeTest
 {
     private const string PaddockId = "smoke001";
+
+    /// <summary>A paddock folder settings.json does not list: Paddock must not leave its icon out of sight.</summary>
+    private const string OrphanId = "recov001";
+
+    /// <summary>Another, which still describes its paddock: it must come back as that paddock, where it was.</summary>
+    private const string DescribedId = "meta0001";
     private const string PaddockTitle = "Smoke Paddock";
 
     private static readonly TimeSpan DefaultWait = TimeSpan.FromSeconds(10);
@@ -58,22 +64,29 @@ internal sealed class SmokeTest
         }
 
         Step("The paddock is visible on the desktop", PaddockIsVisible);
+        Step("Paddock folders settings.json does not list come back: rebuilt from their description, or as Recovered", RecoversOrphanedFolder);
         Step("Dragging a desktop icon in moves it into the paddock", DragOneIconIn);
         Step("Dropping two desktop files at once moves both", DragTwoIconsIn);
         Step("The paddock shows its icons sorted by name", () => ExpectOrder("Smoke Alpha", "Smoke Bravo", "Smoke Charlie"));
         Step("Sort By > File Size reorders the icons", SortBySize);
         Step("Sort By > Date Modified reorders the icons", SortByDate);
         Step("Sort By > Ascending reverses the order", ToggleAscending);
+        Step("An auto-organize rule moves a new desktop file in, leaves it out once dragged out, and ignores saves", AutoOrganizeRule);
         Step("Appearance… changes colour, icon size and opacity live, and Reset undoes them", ChangeAppearance);
+        Step("The eyedropper, frosted glass and icon tint apply live, and Reset undoes them", EyedropperGlassAndTint);
         Step("Clicking a paddock does not lift it above an application", ClickStaysBelowApps);
         Step("Show Desktop (Win+D) keeps the paddock visible", ShowDesktopKeepsPaddock);
+        Step("Double-clicking empty desktop hides the paddock and desktop icons, and shows them again", DoubleClickHidesAndShows);
         Step("Dragging an icon out puts it back on the desktop", DragIconOut);
         Step("An all-users desktop shortcut can be grouped", GroupSharedItem);
+        Step("After a crash, Paddock starts again by itself with its icons", RestartsAfterCrash);
+        Step("When Paddock freezes, its watchdog ends it and starts it again", RestartsAfterFreeze);
         Step("Icons and layout survive a restart", Restart);
         Step("Removing the paddock returns its icons to the desktop", RemovePaddock);
         Step("A plain right-click on the desktop still opens Explorer's menu", RightClickStillOpensDesktopMenu);
         Step("Right-dragging on empty desktop offers to create a paddock there", RightDragCreatesPaddock);
         Step("Clicking elsewhere withdraws the offer", ClickingElsewhereWithdrawsOffer);
+        Step("Paddock.exe --restore-all puts every icon back on the desktop while Paddock is closed", RestoreAllFromCommandLine);
         Step("Paddock logged no errors", LogHasNoErrors);
 
         Finish();
@@ -107,10 +120,28 @@ internal sealed class SmokeTest
         MakeDesktopFile("Smoke Bravo.txt", 100, new DateTime(2022, 1, 1));
         MakeDesktopFile("Smoke Charlie.txt", 200, new DateTime(2021, 1, 1));
 
+        // Left in the store by paddocks settings.json has forgotten: one bare,
+        // one still holding the description every paddock folder keeps.
+        Directory.CreateDirectory(Path.Combine(Store, OrphanId));
+        File.WriteAllText(Path.Combine(Store, OrphanId, "Smoke Orphan.txt"), "orphan");
+        Directory.CreateDirectory(Path.Combine(Store, DescribedId));
+        File.WriteAllText(Path.Combine(Store, DescribedId, "Smoke Kept.txt"), "kept");
+        File.WriteAllText(Path.Combine(Store, DescribedId, ".paddock.json"), $$"""
+            { "id": "{{DescribedId}}", "title": "Smoke Rebuilt", "titleVisibility": "always",
+              "x": 40, "y": 430, "width": 260, "height": 180 }
+            """);
+
+        // Already on the desktop when Paddock starts, and matching its rule:
+        // saving it must not count as a new arrival.
+        MakeDesktopFile("Smoke Routed Saved.txt", 120, new DateTime(2023, 1, 1));
+
         Directory.CreateDirectory(_dataFolder);
         File.WriteAllText(SettingsFile, $$"""
             {
               "startWithWindows": false,
+              "autoSortRules": [
+                { "matchType": "nameGlob", "pattern": "Smoke Routed*", "targetPaddockId": "{{PaddockId}}" }
+              ],
               "corrals": {
                 "default": {
                   "name": "default",
@@ -153,6 +184,57 @@ internal sealed class SmokeTest
         var rect = PaddockRect;
         foreach (var point in new[] { new Point(rect.Left + 30, rect.Top + rect.Height / 2), new Point(rect.Right - 40, rect.Top + 10) })
             ExpectPaddockAt(point);
+    }
+
+    private void RecoversOrphanedFolder()
+    {
+        Check(File.Exists(Path.Combine(Store, "README.txt")), "The paddock store has no README saying what it is.");
+
+        var recovered = IntPtr.Zero;
+        WaitUntil(() => (recovered = FindAppWindow("Recovered")) != IntPtr.Zero, "a \"Recovered\" paddock to appear",
+            onTimeout: DescribeAppWindows);
+        WaitUntil(() => ItemsIn(recovered).Contains("Smoke Orphan"), "'Smoke Orphan' to show in it",
+            onTimeout: () => $"it shows [{string.Join(", ", ItemsIn(recovered))}]");
+
+        var listed = JsonNode.Parse(File.ReadAllText(SettingsFile))?["corrals"]?["default"]?["paddocks"]?.AsArray()
+            .Any(p => p?["id"]?.GetValue<string>() == OrphanId) == true;
+        Check(listed, "settings.json does not list the recovered paddock.");
+        Screenshot("recovered");
+
+        // Closing it puts the icon back on the desktop, like any paddock.
+        Native.GetWindowRect(recovered, out var rect);
+        Native.RightClick(new Point(rect.Right - 40, rect.Top + 60));
+        var close = WaitFor(() => FindMenuItem("Close Paddock"), "the Recovered paddock's menu", TimeSpan.FromSeconds(5));
+        ((InvokePattern)close.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+
+        var onDesktop = Path.Combine(_desktop, "Smoke Orphan.txt");
+        WaitUntil(() => File.Exists(onDesktop), "'Smoke Orphan.txt' to return to the desktop");
+        WaitUntil(() => FindAppWindow("Recovered") == IntPtr.Zero, "the Recovered paddock to close");
+
+        File.Delete(onDesktop);
+
+        // The folder that described itself is its old paddock again: its title, its place.
+        var rebuilt = IntPtr.Zero;
+        WaitUntil(() => (rebuilt = FindAppWindow("Smoke Rebuilt")) != IntPtr.Zero, "the described paddock to be rebuilt",
+            onTimeout: DescribeAppWindows);
+        Native.GetWindowRect(rebuilt, out var placed);
+        Info($"Rebuilt paddock at {placed}.");
+        Check(Math.Abs(placed.Left - 40) <= 4 && Math.Abs(placed.Top - 430) <= 4 && Math.Abs(placed.Width - 260) <= 4,
+            $"The rebuilt paddock is at {placed}, not where its description put it (40,430, 260 wide).");
+        WaitUntil(() => ItemsIn(rebuilt).Contains("Smoke Kept"), "'Smoke Kept' to show in it");
+        Check(FindAppWindow("Recovered 2") == IntPtr.Zero, "The described folder came back as a Recovered paddock.");
+
+        Native.RightClick(new Point(placed.Right - 40, placed.Top + 60));
+        close = WaitFor(() => FindMenuItem("Close Paddock"), "the rebuilt paddock's menu", TimeSpan.FromSeconds(5));
+        ((InvokePattern)close.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+
+        var kept = Path.Combine(_desktop, "Smoke Kept.txt");
+        WaitUntil(() => File.Exists(kept), "'Smoke Kept.txt' to return to the desktop");
+        WaitUntil(() => FindAppWindow("Smoke Rebuilt") == IntPtr.Zero, "the rebuilt paddock to close");
+        Check(!Directory.Exists(Path.Combine(Store, DescribedId)), "The closed paddock's folder (and description) stayed behind.");
+
+        File.Delete(kept);
+        Native.RefreshDesktop(_desktop);
     }
 
     private void DragOneIconIn()
@@ -240,6 +322,169 @@ internal sealed class SmokeTest
         // Clicking away closes the panel, as with any popover.
         Native.Click(BareSpot(300, 620));
         WaitUntil(() => FindAppElement("Blue", ControlType.Button) is null, "the Appearance panel to close");
+    }
+
+    private void AutoOrganizeRule()
+    {
+        const string name = "Smoke Routed.txt";
+        var onDesktop = Path.Combine(_desktop, name);
+        var inPaddock = Path.Combine(PaddockFolder, name);
+        var saved = Path.Combine(_desktop, "Smoke Routed Saved.txt");
+        var savedInPaddock = Path.Combine(PaddockFolder, "Smoke Routed Saved.txt");
+
+        try
+        {
+            File.WriteAllText(onDesktop, new string('r', 150));
+
+            WaitUntil(() => File.Exists(inPaddock) && !File.Exists(onDesktop),
+                "the rule to move 'Smoke Routed.txt' into the paddock", TimeSpan.FromSeconds(15));
+            WaitUntil(() => PaddockItems().Contains("Smoke Routed"), "'Smoke Routed' to show in the paddock");
+
+            // Taken out by hand, it stays out: a rule never sends back what the user removed.
+            MinimiseOtherWindows();
+            Native.Drag(PaddockItemCentre("Smoke Routed"), BareDesktopPoint());
+            WaitUntil(() => File.Exists(onDesktop) && !File.Exists(inPaddock), "'Smoke Routed.txt' to come back to the desktop");
+
+            Thread.Sleep(5000);
+            Check(File.Exists(onDesktop) && !File.Exists(inPaddock), "The rule moved 'Smoke Routed.txt' straight back into the paddock.");
+
+            // Saving a document that was already on the desktop is not an
+            // arrival, though Office saves by renaming a fresh copy over it.
+            var temp = Path.Combine(_desktop, "~WRD0001.tmp");
+            var aside = Path.Combine(_desktop, "~WRL0001.tmp");
+            File.WriteAllText(temp, "saved again");
+            File.Move(saved, aside);
+            File.Move(temp, saved);
+            File.Delete(aside);
+
+            Thread.Sleep(5000);
+            Check(File.Exists(saved) && !File.Exists(savedInPaddock),
+                "Saving a document that was already on the desktop moved it into the paddock.");
+        }
+        finally
+        {
+            // Out of the way of the steps that compare what the paddock holds.
+            foreach (var path in new[] { onDesktop, inPaddock, saved, savedInPaddock })
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+
+            Native.RefreshDesktop(_desktop);
+            WaitUntil(() => !PaddockItems().Any(n => n.StartsWith("Smoke Routed", StringComparison.Ordinal)),
+                "the routed test files to leave the paddock");
+        }
+    }
+
+    private void EyedropperGlassAndTint()
+    {
+        MinimiseOtherWindows();
+
+        // A pixel of wallpaper, read before anything of Paddock's is over it.
+        var spot = BareDesktopPoint();
+        var expected = Native.PixelAt(spot);
+        Info($"Wallpaper at {spot} is {expected}.");
+
+        OpenAppearancePanel();
+
+        ClickElement(WaitFor(() => FindAppElement("Pick paddock colour", ControlType.Button), "the eyedropper button", TimeSpan.FromSeconds(3)));
+        WaitUntil(() => FindAppWindow("Pick a colour") != IntPtr.Zero, "the eyedropper to open", onTimeout: DescribeAppWindows);
+
+        Native.MoveTo(spot);
+        Thread.Sleep(500);
+        KeepImage("eyedropper", new Rectangle(spot.X - 10, spot.Y - 10, 200, 200));
+        Screenshot("eyedropper");
+        Native.Click(spot);
+
+        WaitUntil(() => StyleSetting("backgroundColor") == expected, $"the picked colour {expected} to be saved",
+            onTimeout: () => $"backgroundColor is {StyleSetting("backgroundColor")}");
+        WaitUntil(() => FindAppWindow("Pick a colour") == IntPtr.Zero, "the eyedropper to close");
+        WaitUntil(() => FindAppElement("Frosted glass", ControlType.RadioButton) is not null,
+            "the Appearance panel to come back after picking", TimeSpan.FromSeconds(5));
+
+        ClickElement(FindAppElement("Frosted glass", ControlType.RadioButton)!);
+        WaitUntil(() => StyleSetting("frostedGlass") == "true" && StyleSetting("opacity") == "0.45",
+            "frosted glass (with a lighter tint) to be saved",
+            onTimeout: () => $"frostedGlass is {StyleSetting("frostedGlass")}, opacity {StyleSetting("opacity")}");
+
+        Thread.Sleep(600);
+        var rect = PaddockRect;
+        ExpectPaddockAt(new Point(rect.Left + 30, rect.Top + rect.Height / 2));
+        ExpectPaddockAt(new Point(rect.Left + rect.Width / 2, rect.Top + 4));
+
+        ClickElement(WaitFor(() => FindAppElement("Blue icon tint", ControlType.Button), "the Blue icon tint", TimeSpan.FromSeconds(3)));
+        WaitUntil(() => StyleSetting("iconTint") == "#0A84FF", "the icon tint to be saved",
+            onTimeout: () => $"iconTint is {StyleSetting("iconTint")}");
+        WaitUntil(() => FindAppElement("Tint strength", ControlType.Slider) is not null, "the tint strength slider to appear");
+
+        Thread.Sleep(500);
+        KeepImage("frosted-tinted", Union(PaddockRect, Rectangle.Empty));
+        Screenshot("frosted-tinted");
+
+        ClickElement(WaitFor(() => FindAppElement("Reset", ControlType.Button), "the Reset button", TimeSpan.FromSeconds(3)));
+        WaitUntil(() => StyleSetting("frostedGlass") == "false" && StyleSetting("iconTint") is null
+                        && StyleSetting("backgroundColor") == "#1C1C1E" && StyleSetting("opacity") == "0.88",
+            "Reset to turn off the glass and the tint",
+            onTimeout: () => $"style is {StyleSetting("backgroundColor")}, glass {StyleSetting("frostedGlass")}, " +
+                             $"tint {StyleSetting("iconTint")}, opacity {StyleSetting("opacity")}");
+
+        rect = PaddockRect;
+        ExpectPaddockAt(new Point(rect.Left + 30, rect.Top + rect.Height / 2));
+
+        Native.Click(BareSpot(300, 620));
+        WaitUntil(() => FindAppElement("Frosted glass", ControlType.RadioButton) is null, "the Appearance panel to close");
+    }
+
+    private void OpenAppearancePanel()
+    {
+        var rect = PaddockRect;
+        Native.RightClick(new Point(rect.Right - 70, rect.Bottom - 60));
+
+        var menuItem = WaitFor(() => FindMenuItem("Appearance…"), "the paddock menu", TimeSpan.FromSeconds(5));
+        ((InvokePattern)menuItem.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+        WaitFor(() => FindAppElement("Frosted glass", ControlType.RadioButton), "the Appearance panel", TimeSpan.FromSeconds(5));
+        Thread.Sleep(300);
+    }
+
+    private void DoubleClickHidesAndShows()
+    {
+        MinimiseOtherWindows();
+        var spot = BareDesktopPoint();
+        var icons = DesktopListView();
+        Info($"Double-clicking bare desktop at {spot}.");
+
+        try
+        {
+            Native.DoubleClick(spot);
+            WaitUntil(() => !Native.IsWindowVisible(_paddock), "the paddock to hide");
+            WaitUntil(() => !Native.IsWindowVisible(icons), "the desktop icons to hide with it");
+            Check(TopSetting("desktopIconsHiddenByPaddock") == "true", "settings.json does not note that Paddock hid the desktop icons.");
+            Screenshot("double-click-hidden");
+
+            Native.DoubleClick(spot);
+            WaitUntil(() => Native.IsWindowVisible(_paddock), "the paddock to come back");
+            WaitUntil(() => Native.IsWindowVisible(icons), "the desktop icons to come back");
+            Check(TopSetting("desktopIconsHiddenByPaddock") == "false", "settings.json still says the desktop icons are hidden.");
+
+            Thread.Sleep(600);
+            var rect = PaddockRect;
+            ExpectPaddockAt(new Point(rect.Left + 30, rect.Top + rect.Height / 2));
+        }
+        finally
+        {
+            // Never leave the next steps without a paddock or desktop icons to work with.
+            if (!Native.IsWindowVisible(_paddock))
+            {
+                Native.Chord(Native.VK_CONTROL, Native.VK_F12);
+                Thread.Sleep(1000);
+            }
+
+            if (!Native.IsWindowVisible(DesktopListView()))
+            {
+                Native.ToggleDesktopIcons(DesktopListView());
+                Thread.Sleep(1000);
+            }
+        }
     }
 
     private void ClickStaysBelowApps()
@@ -338,6 +583,123 @@ internal sealed class SmokeTest
         WaitUntil(() => PaddockItems().Contains("Smoke Shared"), "'Smoke Shared' to show in the paddock");
     }
 
+    private void RestartsAfterCrash()
+    {
+        var before = PaddockItems();
+        var crashed = _app!;
+
+        Native.CrashProcess(crashed);
+        crashed.WaitForExit(5000);
+        Info($"Ended Paddock (pid {crashed.Id}) the way a crash does.");
+
+        Process? restarted = null;
+        WaitUntil(() => (restarted = FindPaddockProcessOtherThan(crashed.Id)) is not null,
+            "Paddock to be started again by its watchdog", TimeSpan.FromSeconds(30));
+
+        _app = restarted;
+        WaitUntil(() => (_paddock = FindPaddockWindow()) != IntPtr.Zero, "the paddock window to come back", TimeSpan.FromSeconds(30));
+        Info($"Paddock is back as pid {restarted!.Id}.");
+        Thread.Sleep(1500);
+        Screenshot("after-crash");
+
+        ExpectOrder(before.ToArray());
+        Check(File.ReadAllText(LogFile).Contains("starting it again"), "paddock.log does not say the watchdog restarted Paddock.");
+    }
+
+    private void RestartsAfterFreeze()
+    {
+        var before = PaddockItems();
+        var frozen = _app!;
+
+        // Freezes are only judged once Paddock has been up for a minute.
+        var up = DateTime.Now - frozen.StartTime;
+        if (up < TimeSpan.FromSeconds(62))
+            Thread.Sleep(TimeSpan.FromSeconds(62) - up);
+
+        Check(Native.FreezeUiThread(frozen), "Could not freeze Paddock's UI thread.");
+        Info($"Froze Paddock's UI thread (pid {frozen.Id}).");
+
+        Process? restarted = null;
+        WaitUntil(() => (restarted = FindPaddockProcessOtherThan(frozen.Id)) is not null,
+            "the watchdog to end the frozen Paddock and start it again", TimeSpan.FromSeconds(75));
+
+        Check(frozen.WaitForExit(10000), "The frozen Paddock is still running next to the new one.");
+
+        _app = restarted;
+        WaitUntil(() => (_paddock = FindPaddockWindow()) != IntPtr.Zero, "the paddock window to come back", TimeSpan.FromSeconds(30));
+        Info($"Paddock is back as pid {restarted!.Id}.");
+        Thread.Sleep(1500);
+        Screenshot("after-freeze");
+
+        ExpectOrder(before.ToArray());
+        Check(File.ReadAllText(LogFile).Contains("stopped responding"), "paddock.log does not say the watchdog ended a frozen Paddock.");
+    }
+
+    /// <summary>The running Paddock that shows the test paddock, if it is not the given process.</summary>
+    private Process? FindPaddockProcessOtherThan(int processId)
+    {
+        foreach (var hwnd in Native.TopLevelWindows())
+        {
+            if (!Native.IsWindowVisible(hwnd) || Native.TitleOf(hwnd) != PaddockTitle)
+                continue;
+
+            var owner = (int)Native.ProcessOf(hwnd);
+            if (owner == processId)
+                continue;
+
+            try
+            {
+                var process = Process.GetProcessById(owner);
+                if (process.ProcessName.Equals("Paddock", StringComparison.OrdinalIgnoreCase))
+                    return process;
+            }
+            catch (ArgumentException)
+            {
+                // Gone again.
+            }
+        }
+
+        return null;
+    }
+
+    private void RestoreAllFromCommandLine()
+    {
+        if (_app is { HasExited: false })
+        {
+            _app.Kill();
+            _app.WaitForExit(5000);
+        }
+
+        // Something to restore that settings.json has never heard of.
+        Directory.CreateDirectory(Path.Combine(Store, "rest0001"));
+        File.WriteAllText(Path.Combine(Store, "rest0001", "Smoke Restore.txt"), "restore me");
+        var inStore = ItemsInStore().Select(Path.GetFileName).ToList();
+        Info($"In the store: {string.Join(", ", inStore)}.");
+
+        using var restore = Process.Start(new ProcessStartInfo(_exe, "--restore-all --quiet") { UseShellExecute = false })!;
+        Check(restore.WaitForExit(30000), "Paddock.exe --restore-all did not finish.");
+        Check(restore.ExitCode == 0, $"Paddock.exe --restore-all exited with {restore.ExitCode}.");
+
+        foreach (var name in inStore)
+            Check(File.Exists(Path.Combine(_desktop, name!)), $"'{name}' is not back on the desktop.");
+
+        var left = ItemsInStore();
+        Check(left.Count == 0, $"Still in the store: {string.Join(", ", left.Select(Path.GetFileName))}.");
+        Check(File.Exists(Path.Combine(Store, "README.txt")), "The store's README went too.");
+
+        File.Delete(Path.Combine(_desktop, "Smoke Restore.txt"));
+    }
+
+    /// <summary>
+    /// Files in the paddock folders — icons, that is: not the store's README,
+    /// nor the description each paddock folder keeps of its paddock.
+    /// </summary>
+    private List<string> ItemsInStore()
+        => Directory.EnumerateFiles(Store, "*", SearchOption.AllDirectories)
+            .Where(p => Path.GetDirectoryName(p) != Store)
+            .Where(p => !Path.GetFileName(p).StartsWith(".paddock.json", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
     private void Restart()
     {
         var before = PaddockItems();
@@ -356,7 +718,10 @@ internal sealed class SmokeTest
 
     private void RemovePaddock()
     {
-        var inside = Directory.EnumerateFiles(PaddockFolder).Select(Path.GetFileName).ToList();
+        var inside = Directory.EnumerateFiles(PaddockFolder)
+            .Select(Path.GetFileName)
+            .Where(n => !n!.StartsWith(".paddock.json", StringComparison.OrdinalIgnoreCase))
+            .ToList();
         Check(inside.Count > 0, "Nothing in the paddock to return.");
 
         InvokeMenu("Close Paddock");
@@ -544,11 +909,14 @@ internal sealed class SmokeTest
     }
 
     /// <summary>The names of the paddock's icons, in the order they are drawn.</summary>
-    private List<string> PaddockItems()
+    private List<string> PaddockItems() => ItemsIn(_paddock);
+
+    /// <summary>The names of the test icons in a paddock window, in the order they are drawn.</summary>
+    private static List<string> ItemsIn(IntPtr paddockWindow)
     {
         try
         {
-            var root = AutomationElement.FromHandle(_paddock);
+            var root = AutomationElement.FromHandle(paddockWindow);
             var items = root.FindAll(TreeScope.Descendants,
                 new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.DataItem));
 
@@ -592,6 +960,9 @@ internal sealed class SmokeTest
         return "Paddock's visible windows: " + string.Join("; ", windows)
                + $". Foreground: {Describe(Native.GetForegroundWindow())}";
     }
+
+    private string? TopSetting(string name)
+        => JsonNode.Parse(File.ReadAllText(SettingsFile))?[name]?.ToString();
 
     private string? StyleSetting(string name)
     {
@@ -692,11 +1063,22 @@ internal sealed class SmokeTest
     private static Point BareSpot(int x, int y)
     {
         var point = new Point(x, y);
+
+        // A notification (Paddock's own "restarted" notice, say) passes by
+        // itself within seconds: wait for it rather than fail.
+        var waited = Stopwatch.StartNew();
+        while (waited.Elapsed < TimeSpan.FromSeconds(12) && IsNotification(Native.RootWindowAt(point)))
+            Thread.Sleep(250);
+
         var hit = Native.WindowFromPoint(new Native.POINT { X = x, Y = y });
         Check(Native.ClassOf(hit) == "SysListView32", $"{point} is not bare desktop ({Describe(Native.RootWindowAt(point))}).");
         Check(!DesktopIcons().Any(i => i.Current.BoundingRectangle.Contains(x, y)), $"{point} is on a desktop icon.");
         return point;
     }
+
+    private static bool IsNotification(IntPtr window)
+        => Native.ClassOf(window) == "Windows.UI.Core.CoreWindow"
+           && Native.TitleOf(window).Contains("notification", StringComparison.OrdinalIgnoreCase);
 
     private string? PaddockSetting(string name)
     {

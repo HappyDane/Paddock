@@ -88,7 +88,7 @@ The minimum viable product that makes the app usable.
 - [x] Auto-arrange icons in grid layout after sort
 - [x] Double-click an icon inside a paddock to launch it
 - [x] Right-click icon shows the standard Windows shell context menu
-- [ ] Collect the icons that were sitting underneath a newly drawn paddock
+- [x] Collect the icons that were sitting underneath a newly drawn paddock
 - [ ] Free icon placement inside a paddock (currently a reflowing grid)
 
 #### P1.4 Persistence
@@ -102,7 +102,7 @@ The minimum viable product that makes the app usable.
 - [x] **Rounded corners** (configurable radius per paddock)
 - [x] Light and dark default themes, switchable at runtime
 - [x] New paddocks inherit `DefaultOpacity` and `DefaultCornerRadius` from settings
-- [ ] Colour picker UI (values are settable in `settings.json` today)
+- [x] Colour picker UI: swatches plus an eyedropper that picks any colour off the screen
 
 #### P1.6 Zone Titles
 - [x] **Title visibility mode**: Always visible, Hover-only, Hidden — per paddock
@@ -129,9 +129,10 @@ The minimum viable product that makes the app usable.
 #### P2.3 Quick Hide
 - [x] Configurable global hotkey for toggle (`Ctrl+F12` by default), plus tray double-click
 - [x] **Per-paddock exclusion**: Mark specific paddocks as "always visible" (excluded from Quick Hide)
+- [x] Double-click empty desktop to toggle — seen by the desktop mouse hook, which
+  watches left presses without taking them, so the desktop still gets its clicks
+- [x] Hiding paddocks hides the desktop's own icons too (optional, on by default)
 - [ ] Fade animation on show/hide
-- ~~Double-click empty desktop to toggle~~ — not possible: Paddock keeps no overlay
-  over empty desktop space, so those clicks belong to the shell, not to us
 
 #### P2.4 Layout & Snapping
 - [ ] Snap paddocks to screen edges and to each other
@@ -141,16 +142,22 @@ The minimum viable product that makes the app usable.
 - [ ] Lock paddock positions (prevent accidental moves)
 
 #### P2.5 Advanced Styling
-- [ ] Blur/acrylic background effect (Windows 10/11 Mica/Acrylic)
+- [x] Frosted glass: the wallpaper shows through blurred, under the paddock's tint
+- [x] Icon tint: every icon in a paddock takes on one hue (keeping its own light and shade)
 - [ ] Custom JSON-based theme files
 - [ ] Per-paddock or global theme application
 - [ ] Shadow intensity control
 
 #### P2.6 Auto-Organization Rules
-- [ ] Rule: auto-sort new desktop icons into a specific paddock by file type
+- [x] Rule: auto-sort new desktop icons into a specific paddock by file type
   - e.g., `.pdf` → "Documents" paddock, `.exe` → "Apps" paddock
-- [ ] Rule: auto-sort by name pattern (regex or glob)
-- [ ] "Catch-all" paddock for uncategorized new icons
+- [x] Rule: by kind of item (documents, images, installers, …)
+- [x] Rule: auto-sort by name pattern (regex or glob)
+- [x] Rule: by where it came from — downloaded from the internet, or moved/copied out of a folder such as Downloads
+- [x] Rule: shortcuts by the kind of app they start (games, creative tools, development, …)
+- [x] "Catch-all" paddock for uncategorized new icons
+- [x] Rule editor (tray, Settings, or a paddock's menu → Auto-Organize…) and "Organize Desktop Now"
+- [ ] Items arriving on the all-users desktop (that needs a permission prompt per batch)
 
 ---
 
@@ -188,6 +195,11 @@ The minimum viable product that makes the app usable.
   "globalTheme": "dark",
   "quickHideEnabled": true,
   "quickHideHotkey": "Ctrl+F12",
+  "doubleClickToHide": true,
+  "quickHideDesktopIcons": true,
+  "desktopIconsHiddenByPaddock": false,
+  "defaultFrostedGlass": false,
+  "autoOrganizeEnabled": true,
   "snapEnabled": true,
   "intelligentSpacing": 12,
   "defaultOpacity": 0.88,
@@ -216,7 +228,10 @@ The minimum viable product that makes the app usable.
             "opacity": 0.88,
             "cornerRadius": 16,
             "borderColor": "#26FFFFFF",
-            "borderThickness": 1
+            "borderThickness": 1,
+            "frostedGlass": false,
+            "iconTint": "#0A84FF",
+            "iconTintStrength": 0.8
           },
           "icons": [
             {
@@ -230,7 +245,16 @@ The minimum viable product that makes the app usable.
       ]
     }
   },
-  "autoSortRules": []
+  "autoSortRules": [
+    {
+      "id": "3f9c2a1b",
+      "enabled": true,
+      "matchType": "extension",
+      "_comment": "extension | nameGlob | nameRegex | kind | appCategory | downloaded | fromFolder | anything",
+      "pattern": ".pdf, .docx",
+      "targetPaddockId": "a1b2c3"
+    }
+  ]
 }
 ```
 

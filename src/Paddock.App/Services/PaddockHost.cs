@@ -23,9 +23,16 @@ internal sealed class PaddockHost : IDisposable
     /// </summary>
     private static readonly TimeSpan ZOrderInterval = TimeSpan.FromSeconds(3);
 
+    /// <summary>
+    /// How often paddocks are re-synced with their folders regardless of
+    /// file-watcher events, which can be lost when many changes land at once.
+    /// </summary>
+    private static readonly TimeSpan ResyncInterval = TimeSpan.FromMinutes(1);
+
     private readonly App _app;
     private readonly List<PaddockWindow> _windows = new();
     private readonly DispatcherTimer _zOrderTimer;
+    private readonly DispatcherTimer _resyncTimer;
 
     /// <summary>
     /// A second re-pin shortly after a foreground change. Show Desktop moves
@@ -37,12 +44,32 @@ internal sealed class PaddockHost : IDisposable
     private bool _paddocksHidden;
     private bool _disposed;
 
+    /// <summary>Quick Hide hid the desktop's own icons, and must show them again.</summary>
+    private bool _hidDesktopIcons;
+
+    /// <summary>Keeps trying to show the desktop icons again if Explorer would not the first time.</summary>
+    private readonly DispatcherTimer _iconRetryTimer;
+
     internal PaddockHost(App app)
     {
         _app = app;
 
         _zOrderTimer = new DispatcherTimer { Interval = ZOrderInterval };
         _zOrderTimer.Tick += (_, _) => PinAllToDesktop();
+
+        _resyncTimer = new DispatcherTimer { Interval = ResyncInterval };
+        _resyncTimer.Tick += (_, _) =>
+        {
+            _app.DesktopIconService.EnsureStoreWatched();
+            RefreshFromDisk();
+        };
+
+        _iconRetryTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _iconRetryTimer.Tick += (_, _) =>
+        {
+            if (!_paddocksHidden)
+                RestoreDesktopIcons();
+        };
 
         _settleTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
         _settleTimer.Tick += (_, _) =>
@@ -57,7 +84,15 @@ internal sealed class PaddockHost : IDisposable
     /// <summary>Restores the saved layout and starts watching the environment.</summary>
     internal void Start()
     {
+        // A previous run hid the desktop's icons and never got to show them again.
+        if (_app.Settings.Settings.DesktopIconsHiddenByPaddock)
+        {
+            Log.Info("The desktop icons were left hidden by an earlier run; showing them again.");
+            RestoreDesktopIcons();
+        }
+
         _app.PaddockManager.ReconcilePaddocks();
+        var recovered = RecoverLostIcons();
         ClampAllToMonitors();
 
         foreach (var model in _app.PaddockManager.GetPaddocks().ToList())
@@ -70,8 +105,90 @@ internal sealed class PaddockHost : IDisposable
         _app.ShellHookService.ForegroundChanged += OnForegroundChanged;
         _app.ShellHookService.StartForegroundTracking();
         _app.DesktopIconService.WatchStore(OnStoreChanged);
+        _resyncTimer.Start();
 
         LogStartupState();
+
+        if (recovered.Rebuilt > 0)
+        {
+            _app.Notify(
+                "Paddock rebuilt your paddocks",
+                $"Its settings were missing or damaged, so {recovered.Rebuilt} paddock(s) were rebuilt from their folders.");
+        }
+        else if (recovered.Icons > 0)
+        {
+            _app.Notify(
+                "Paddock found lost icons",
+                $"{recovered.Icons} icon(s) had lost their paddock. They are in \"Recovered\" — drag them wherever you like.");
+        }
+    }
+
+    /// <summary>
+    /// Makes sure nothing in the store is out of sight. A paddock folder that
+    /// no paddock owns any more (settings.json was unreadable, say) gets its
+    /// paddock back: rebuilt from the description kept in the folder, with its
+    /// own title, place and look, or else as "Recovered". Items loose at the
+    /// top of the store go back on the desktop. Returns how many paddocks were
+    /// rebuilt, and how many icons came back into "Recovered" ones.
+    /// </summary>
+    private (int Rebuilt, int Icons) RecoverLostIcons()
+    {
+        var manager = _app.PaddockManager;
+        var store = _app.IconStore;
+
+        foreach (var stray in store.ListStrayItems())
+        {
+            if (store.MoveToDesktop(stray) is { } back)
+                Log.Info($"'{System.IO.Path.GetFileName(back)}' was loose in the paddock store; put it back on the desktop.");
+        }
+
+        var orphans = manager.FindOrphanedFolders();
+        if (orphans.Count == 0)
+        {
+            manager.WriteFolderMetadata();
+            return (0, 0);
+        }
+
+        var areas = ScreenHelper.GetWorkAreas();
+        var primary = areas.FirstOrDefault(a => a.Contains(1, 1));
+        if (primary == default)
+            primary = areas[0];
+
+        var size = new PaddockModel();
+        var gap = Math.Max(12, _app.Settings.Settings.IntelligentSpacing);
+
+        var rebuilt = new List<string>();
+        var adopted = new List<string>();
+
+        using (manager.DeferSave())
+        {
+            // Those that describe themselves first, so the rest fit around them.
+            foreach (var id in orphans)
+            {
+                if (manager.RestoreFromFolder(id) is not null)
+                    rebuilt.Add(id);
+            }
+
+            var homeless = orphans.Except(rebuilt).ToList();
+            for (var i = 0; i < homeless.Count; i++)
+            {
+                var spot = _app.LayoutEngine.FindFreeSpot(manager.GetPaddocks(), primary, size.Width, size.Height, gap)
+                           ?? (primary.Left + gap * (i + 1), primary.Top + gap * (i + 1));
+                var title = homeless.Count == 1 ? "Recovered" : $"Recovered {i + 1}";
+
+                manager.AdoptFolder(homeless[i], title, spot.X, spot.Y, size.Width, size.Height);
+                adopted.Add(homeless[i]);
+            }
+
+            manager.ReconcilePaddocks();
+        }
+
+        manager.WriteFolderMetadata();
+
+        var icons = adopted.Sum(id => manager.GetPaddock(id)?.Icons.Count ?? 0);
+        Log.Warn($"Found {orphans.Count} paddock folder(s) no paddock owned any more: rebuilt {rebuilt.Count} from " +
+                 $"their own description, and put {icons} icon(s) from the rest in \"Recovered\".");
+        return (rebuilt.Count, icons);
     }
 
     /// <summary>
@@ -108,10 +225,14 @@ internal sealed class PaddockHost : IDisposable
     /// <paramref name="beginRename"/> its title then opens for editing, so a
     /// freshly drawn paddock can be named without a trip to the context menu.
     /// </summary>
-    internal void CreatePaddock(Rect screenArea, bool beginRename = false, bool collectIconsUnderneath = false)
+    internal PaddockModel CreatePaddock(
+        Rect screenArea,
+        bool beginRename = false,
+        bool collectIconsUnderneath = false,
+        string title = "New Paddock")
     {
         var model = _app.PaddockManager.CreatePaddock(
-            title: "New Paddock",
+            title: title,
             x: screenArea.X,
             y: screenArea.Y,
             width: screenArea.Width,
@@ -134,6 +255,48 @@ internal sealed class PaddockHost : IDisposable
             CollectIconsUnderneath(window, beginRename);
         else if (beginRename)
             window.ViewModel.BeginRenameTitle();
+
+        return model;
+    }
+
+    /// <summary>
+    /// Creates a paddock with this title in a free spot on the primary
+    /// monitor — for rules that name a paddock the user does not have yet.
+    /// </summary>
+    internal PaddockModel CreateNamedPaddock(string title)
+    {
+        var areas = ScreenHelper.GetWorkAreas();
+        var primary = areas.FirstOrDefault(a => a.Contains(1, 1));
+        if (primary == default)
+            primary = areas[0];
+
+        var defaults = new PaddockModel();
+        var gap = Math.Max(12, _app.Settings.Settings.IntelligentSpacing);
+        var spot = _app.LayoutEngine.FindFreeSpot(_app.PaddockManager.GetPaddocks(), primary, defaults.Width, defaults.Height, gap)
+                   ?? (primary.Left + (primary.Width - defaults.Width) / 2, primary.Top + (primary.Height - defaults.Height) / 2);
+
+        return CreatePaddock(new Rect(spot.X, spot.Y, defaults.Width, defaults.Height), title: title);
+    }
+
+    /// <summary>
+    /// Moves items off the desktop into a paddock for an auto-organize rule,
+    /// and briefly outlines the paddock so the user sees where they went.
+    /// Returns how many moved.
+    /// </summary>
+    internal int MoveIntoPaddock(string paddockId, IReadOnlyCollection<string> desktopPaths)
+    {
+        var added = _app.PaddockManager.MoveDesktopItemsIntoPaddock(paddockId, desktopPaths);
+        if (added.Count == 0)
+            return 0;
+
+        if (FindWindow(paddockId) is { } window)
+        {
+            window.ViewModel.RefreshIcons();
+            window.ViewModel.HighlightArrival();
+        }
+
+        _app.DesktopIconService.NotifyShellOfDesktopChange();
+        return added.Count;
     }
 
     /// <summary>
@@ -190,6 +353,7 @@ internal sealed class PaddockHost : IDisposable
     internal void SetPaddocksVisible(bool visible)
     {
         _paddocksHidden = !visible;
+        Log.Info(visible ? "Quick Hide: showing paddocks." : "Quick Hide: hiding paddocks.");
 
         foreach (var window in _windows)
         {
@@ -207,7 +371,59 @@ internal sealed class PaddockHost : IDisposable
             }
         }
 
+        if (visible)
+            RestoreDesktopIcons();
+        else
+            HideDesktopIcons();
+
         UpdateZOrderTimer();
+    }
+
+    /// <summary>
+    /// Quick Hide takes the desktop's own icons with it, as Fences does —
+    /// unless that is turned off, or the user already hid them themselves (in
+    /// which case they are theirs to show again, not ours).
+    /// </summary>
+    private void HideDesktopIcons()
+    {
+        var settings = _app.Settings.Settings;
+        if (!settings.QuickHideDesktopIcons || _hidDesktopIcons)
+            return;
+
+        if (_app.DesktopIconService.AreDesktopIconsShown() != true)
+            return;
+
+        // Noted before asking: if Explorer is slow, it may still hide them
+        // after the request has timed out, and then Paddock must know to show
+        // them again. Showing icons that are already showing does nothing.
+        _hidDesktopIcons = true;
+        settings.DesktopIconsHiddenByPaddock = true;
+        _app.Settings.Save();
+
+        _app.DesktopIconService.SetDesktopIconsShown(false);
+    }
+
+    /// <summary>Shows the desktop's icons again if Paddock hid them (now, or in an earlier run).</summary>
+    internal void RestoreDesktopIcons()
+    {
+        var settings = _app.Settings.Settings;
+        if (!_hidDesktopIcons && !settings.DesktopIconsHiddenByPaddock)
+            return;
+
+        if (!_app.DesktopIconService.SetDesktopIconsShown(true))
+        {
+            // Explorer not ready (just after logon, say) or not answering: keep
+            // the note, and keep trying while Paddock runs.
+            if (!_disposed && !_iconRetryTimer.IsEnabled)
+                _iconRetryTimer.Start();
+
+            return;
+        }
+
+        _iconRetryTimer.Stop();
+        _hidDesktopIcons = false;
+        settings.DesktopIconsHiddenByPaddock = false;
+        _app.Settings.Save();
     }
 
     /// <summary>
@@ -291,6 +507,11 @@ internal sealed class PaddockHost : IDisposable
         _disposed = true;
         _zOrderTimer.Stop();
         _settleTimer.Stop();
+        _resyncTimer.Stop();
+
+        // Never leave the user's desktop empty behind us.
+        _iconRetryTimer.Stop();
+        RestoreDesktopIcons();
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _app.ShellHookService.ForegroundChanged -= OnForegroundChanged;
 

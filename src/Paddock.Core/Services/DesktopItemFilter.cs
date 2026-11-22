@@ -13,6 +13,9 @@ public enum DesktopItemCategory
     Media,
     Archives,
 
+    /// <summary>Programs and installers: .exe, .msi, .msix and the like.</summary>
+    Installers,
+
     /// <summary>Anything that is not a folder and fits none of the named kinds.</summary>
     Other,
 }
@@ -40,15 +43,21 @@ public static class DesktopItemFilter
     private static readonly HashSet<string> Archives = Build(
         ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".iso", ".cab");
 
+    private static readonly HashSet<string> Installers = Build(
+        ".exe", ".msi", ".msix", ".msixbundle", ".appx", ".appxbundle", ".appinstaller");
+
     public static bool Matches(string path, DesktopItemCategory category)
+        => !string.IsNullOrWhiteSpace(path)
+           && (category == DesktopItemCategory.All || Matches(path, Directory.Exists(path), category));
+
+    /// <summary>As <see cref="Matches(string, DesktopItemCategory)"/>, when whether it is a folder is already known.</summary>
+    public static bool Matches(string path, bool isFolder, DesktopItemCategory category)
     {
         if (string.IsNullOrWhiteSpace(path))
             return false;
 
         if (category == DesktopItemCategory.All)
             return true;
-
-        var isFolder = Directory.Exists(path);
 
         if (category == DesktopItemCategory.Folders)
             return isFolder;
@@ -65,11 +74,13 @@ public static class DesktopItemFilter
             DesktopItemCategory.Images => Images.Contains(extension),
             DesktopItemCategory.Media => Media.Contains(extension),
             DesktopItemCategory.Archives => Archives.Contains(extension),
+            DesktopItemCategory.Installers => Installers.Contains(extension),
             DesktopItemCategory.Other => !Shortcuts.Contains(extension)
                                          && !Documents.Contains(extension)
                                          && !Images.Contains(extension)
                                          && !Media.Contains(extension)
-                                         && !Archives.Contains(extension),
+                                         && !Archives.Contains(extension)
+                                         && !Installers.Contains(extension),
             _ => false,
         };
     }
@@ -87,6 +98,7 @@ public static class DesktopItemFilter
         DesktopItemCategory.Images => "images",
         DesktopItemCategory.Media => "media files",
         DesktopItemCategory.Archives => "archives",
+        DesktopItemCategory.Installers => "installers",
         DesktopItemCategory.Other => "other files",
         _ => "items",
     };

@@ -15,12 +15,13 @@ namespace Paddock.App.Services;
 /// create a paddock of exactly that size.
 ///
 /// <see cref="DesktopGestureService"/> raises its events on its hook thread;
-/// everything here runs on the UI thread.
+/// everything here runs on the UI thread. The hook itself belongs to the app
+/// (it also spots desktop double-clicks), which turns it on and off.
 /// </summary>
 internal sealed class DesktopDrawController : IDisposable
 {
     private readonly App _app;
-    private readonly DesktopGestureService _gestures = new();
+    private readonly DesktopGestureService _gestures;
     private readonly object _gate = new();
 
     private DrawRectangleWindow? _outline;
@@ -30,9 +31,10 @@ internal sealed class DesktopDrawController : IDisposable
     private LayoutBounds _latest;
     private bool _updateQueued;
 
-    internal DesktopDrawController(App app)
+    internal DesktopDrawController(App app, DesktopGestureService gestures)
     {
         _app = app;
+        _gestures = gestures;
 
         _gestures.DrawingChanged += OnDrawingChanged;
         _gestures.DrawCompleted += bounds => _app.Dispatcher.BeginInvoke(() => OfferToCreate(ToDips(bounds)));
@@ -44,22 +46,18 @@ internal sealed class DesktopDrawController : IDisposable
         _gestures.ButtonPressed += (x, y) => _app.Dispatcher.BeginInvoke(() => DismissIfOutside(x, y));
     }
 
+    /// <summary>Drawing was turned off: withdraw anything on screen.</summary>
     internal void SetEnabled(bool enabled)
     {
         if (enabled)
-        {
-            _gestures.Start();
             return;
-        }
 
-        _gestures.Stop();
         CloseMenu();
         HideOutline();
     }
 
     public void Dispose()
     {
-        _gestures.Dispose();
         CloseMenu();
         _outline?.Close();
         _outline = null;

@@ -34,6 +34,109 @@ internal static class DesktopListView
         return IntPtr.Zero;
     }
 
+    /// <summary>Where a point lands, as far as the desktop is concerned.</summary>
+    internal enum Surface
+    {
+        /// <summary>Some window that is not the desktop.</summary>
+        NotDesktop,
+
+        /// <summary>The desktop's icon view (it may or may not be on an icon).</summary>
+        IconView,
+
+        /// <summary>The desktop itself with its icons hidden: nothing there but wallpaper.</summary>
+        Wallpaper,
+    }
+
+    /// <summary>
+    /// Says whether a point (physical pixels) is on the desktop, from window
+    /// classes alone — no message is sent, so this is cheap enough for every
+    /// click a low-level hook sees.
+    /// </summary>
+    internal static Surface SurfaceAt(NativeMethods.POINT screenPoint)
+    {
+        var hit = NativeMethods.WindowFromPoint(screenPoint);
+        if (hit == IntPtr.Zero)
+            return Surface.NotDesktop;
+
+        var root = NativeMethods.GetWindowClassName(NativeMethods.GetAncestor(hit, NativeMethods.GA_ROOT));
+        if (root is not ("Progman" or "WorkerW"))
+            return Surface.NotDesktop;
+
+        return NativeMethods.GetWindowClassName(hit) switch
+        {
+            "SysListView32" when NativeMethods.GetWindowClassName(NativeMethods.GetParent(hit)) == "SHELLDLL_DefView"
+                => Surface.IconView,
+            "SHELLDLL_DefView" or "Progman" or "WorkerW" => Surface.Wallpaper,
+            _ => Surface.NotDesktop,
+        };
+    }
+
+    /// <summary>
+    /// True when a double-click at this point was on empty desktop: the icon
+    /// view with no icon there, or the desktop with its icons hidden.
+    /// </summary>
+    internal static bool IsEmptyDesktop(NativeMethods.POINT screenPoint) => SurfaceAt(screenPoint) switch
+    {
+        Surface.Wallpaper => true,
+        Surface.IconView => HitTest(NativeMethods.WindowFromPoint(screenPoint), screenPoint) == -1,
+        _ => false,
+    };
+
+    /// <summary>
+    /// True while the user is naming an item anywhere in the shell: a desktop
+    /// icon, or an item in an Explorer window or a Save As dialog (where a
+    /// "New folder" can be made right on the desktop). An item must not be
+    /// moved away from under the user's typing.
+    /// </summary>
+    internal static bool IsRenamingAnItem() => IsRenamingAnIcon() || IsEditingInAShellView();
+
+    /// <summary>
+    /// The focused window is an edit box inside a shell item view — which is
+    /// what a rename looks like. (Only ever causes a short wait if wrong.)
+    /// </summary>
+    private static bool IsEditingInAShellView()
+    {
+        var foreground = NativeMethods.GetForegroundWindow();
+        if (foreground == IntPtr.Zero)
+            return false;
+
+        var info = new NativeMethods.GUITHREADINFO { cbSize = Marshal.SizeOf<NativeMethods.GUITHREADINFO>() };
+        if (!NativeMethods.GetGUIThreadInfo(NativeMethods.GetWindowThreadProcessId(foreground, out _), ref info)
+            || NativeMethods.GetWindowClassName(info.hwndFocus) != "Edit")
+        {
+            return false;
+        }
+
+        var parent = NativeMethods.GetParent(info.hwndFocus);
+        for (var i = 0; parent != IntPtr.Zero && i < 8; i++)
+        {
+            if (NativeMethods.GetWindowClassName(parent) == "SHELLDLL_DefView")
+                return true;
+
+            parent = NativeMethods.GetParent(parent);
+        }
+
+        return false;
+    }
+
+    /// <summary>True while a desktop icon is being renamed (its label is an edit box).</summary>
+    private static bool IsRenamingAnIcon()
+    {
+        var listView = Find();
+        if (listView == IntPtr.Zero)
+            return false;
+
+        return NativeMethods.SendMessageTimeoutW(
+                   listView,
+                   NativeMethods.LVM_GETEDITCONTROL,
+                   IntPtr.Zero,
+                   IntPtr.Zero,
+                   NativeMethods.SMTO_ABORTIFHUNG,
+                   TimeoutMs,
+                   out var edit) != IntPtr.Zero
+               && edit != IntPtr.Zero;
+    }
+
     /// <summary>
     /// True when <paramref name="screenPoint"/> (physical pixels) is on the
     /// desktop's icon view but on no icon — empty desktop. False when it is on

@@ -13,6 +13,9 @@ public partial class App : Application
     private const string SingleInstanceMutexName = @"Local\Paddock.SingleInstance";
 
     private System.Windows.Forms.NotifyIcon? _trayIcon;
+
+    /// <summary>The heartbeat and the crash watchdog that keep Paddock running.</summary>
+    private Supervision? _supervision;
     private HotkeyService? _hotkeys;
     private System.Threading.Mutex? _instanceMutex;
 
@@ -28,21 +31,21 @@ public partial class App : Application
     /// <summary>Owns the live paddock windows.</summary>
     internal PaddockHost? Host { get; private set; }
 
+    /// <summary>The desktop mouse hook: right-drag to draw, double-click to hide.</summary>
+    private DesktopGestureService? _gestures;
+
     /// <summary>Right-drag on the desktop to draw a paddock.</summary>
     private DesktopDrawController? _drawController;
+
+    /// <summary>Routes new desktop items into paddocks by the user's rules.</summary>
+    internal AutoOrganizeController? AutoOrganize { get; private set; }
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
-        // Paddock relaunches itself elevated to take shortcuts off the
-        // all-users desktop; that copy does its one job and leaves.
-        if (e.Args.Length == 2 && e.Args[0] == SharedDesktopRemover.HelperSwitch)
-        {
-            Shutdown(SharedDesktopRemover.RunHelper(e.Args[1]));
-            return;
-        }
-
+        // The watchdog, --restore-all and the elevated helper never get here:
+        // Program.Main runs those before WPF loads.
         InstallCrashHandlers();
         Log.Info($"Paddock starting (v{typeof(App).Assembly.GetName().Version}).");
 
@@ -55,11 +58,16 @@ public partial class App : Application
             return;
         }
 
+        // From here on, a crash or a freeze brings Paddock back: while it is
+        // not running, the icons in paddocks are not on the desktop.
+        _supervision = new Supervision(e.Args);
+        var restarts = _supervision.Restarts;
+
         // Services
         Settings = new SettingsService();
         DesktopIconService = new DesktopIconService();
         IconStore = DesktopIconService.CreateIconStore();
-        PaddockManager = new PaddockManager(Settings, IconStore, DesktopIconService.CreateSharedDesktopRemover());
+        PaddockManager = new PaddockManager(Settings, IconStore, DesktopIconService.CreateSharedDesktopRemover(_supervision.Waits));
         LayoutEngine = new LayoutEngine();
         IconExtractor = new IconExtractor();
         ShellHookService = new ShellHookService();
@@ -75,11 +83,22 @@ public partial class App : Application
 
         InitializeTrayIcon();
 
+        if (restarts > 0)
+        {
+            Log.Info($"Paddock was restarted after a crash (restart {restarts}).");
+            Notify("Paddock restarted", "Paddock stopped unexpectedly and has started again. Your paddocks are back.");
+        }
+
         Host = new PaddockHost(this);
         Host.Start();
 
-        _drawController = new DesktopDrawController(this);
-        _drawController.SetEnabled(Settings.Settings.DrawOnDesktop);
+        _gestures = new DesktopGestureService();
+        _gestures.DesktopDoubleClicked += () => Dispatcher.BeginInvoke(() => TogglePaddocks());
+        _drawController = new DesktopDrawController(this, _gestures);
+        ConfigureDesktopGestures();
+
+        AutoOrganize = new AutoOrganizeController(this);
+        AutoOrganize.Refresh();
 
         InitializeHotkeys();
 
@@ -162,6 +181,10 @@ public partial class App : Application
         });
     }
 
+    /// <summary>A short notice from the tray icon.</summary>
+    internal void Notify(string title, string text)
+        => _trayIcon?.ShowBalloonTip(7000, title, text, System.Windows.Forms.ToolTipIcon.Info);
+
     /// <summary>
     /// With no paddocks there is nothing on screen at all, so point the user at
     /// the tray menu rather than leaving them wondering whether it started.
@@ -191,6 +214,7 @@ public partial class App : Application
         menu.Items.Add("Show/Hide Paddocks", null, (_, _) => TogglePaddocks());
         menu.Items.Add("-");
         menu.Items.Add("Restore All Icons to Desktop", null, (_, _) => RestoreAllIcons());
+        menu.Items.Add("Auto-Organize...", null, (_, _) => Views.AutoOrganizeWindow.ShowFor(null));
         menu.Items.Add("Settings", null, (_, _) => OpenSettings());
         menu.Items.Add("Open Icons Folder", null, (_, _) => OpenFolder(IconStore.StoreRoot));
         menu.Items.Add("Open Settings Folder", null, (_, _) => OpenFolder(AppPaths.DataFolder));
@@ -221,8 +245,16 @@ public partial class App : Application
 
     private void CreateNewPaddock() => Host?.CreatePaddockInteractive();
 
-    /// <summary>Turns right-drag-to-draw on the desktop on or off (from Settings).</summary>
-    internal void SetDesktopDrawing(bool enabled) => _drawController?.SetEnabled(enabled);
+    /// <summary>
+    /// Applies the Draw on Desktop and Double-click Desktop settings: the
+    /// mouse hook runs while either is on.
+    /// </summary>
+    internal void ConfigureDesktopGestures()
+    {
+        var settings = Settings.Settings;
+        _gestures?.Configure(settings.DrawOnDesktop, settings.DoubleClickToHide);
+        _drawController?.SetEnabled(settings.DrawOnDesktop);
+    }
 
     private void TogglePaddocks() => Host?.ToggleQuickHide();
 
@@ -357,10 +389,15 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // First of all: whatever happens on the way out, this is not a crash.
+        _supervision?.ExitingOnPurpose();
+
         PaddockManager?.SaveLayout();
 
         _hotkeys?.Dispose();
+        _gestures?.Dispose();
         _drawController?.Dispose();
+        AutoOrganize?.Dispose();
         Host?.Dispose();
         ShellHookService?.Dispose();
         DesktopIconService?.Dispose();
@@ -374,6 +411,7 @@ public partial class App : Application
         }
 
         Log.Info("Paddock exited.");
+        _supervision?.Dispose();
 
         if (_trayIcon is not null)
         {

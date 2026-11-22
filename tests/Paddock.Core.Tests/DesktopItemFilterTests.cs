@@ -39,7 +39,9 @@ public class DesktopItemFilterTests : IDisposable
     [InlineData("holiday.jpeg", DesktopItemCategory.Images)]
     [InlineData("song.flac", DesktopItemCategory.Media)]
     [InlineData("backup.7z", DesktopItemCategory.Archives)]
-    [InlineData("installer.exe", DesktopItemCategory.Other)]
+    [InlineData("installer.exe", DesktopItemCategory.Installers)]
+    [InlineData("setup.MSI", DesktopItemCategory.Installers)]
+    [InlineData("notes.xyz", DesktopItemCategory.Other)]
     public void Matches_ClassifiesFilesByExtension(string name, DesktopItemCategory expected)
     {
         var path = File_(name);
