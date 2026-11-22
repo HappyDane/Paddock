@@ -8,6 +8,7 @@ public class PaddockManager
 
     private readonly SettingsService _settingsService;
     private readonly IconStore? _iconStore;
+    private readonly ISharedDesktopRemover? _sharedRemover;
 
     public PaddockManager(SettingsService settingsService)
         : this(settingsService, null)
@@ -18,11 +19,17 @@ public class PaddockManager
     /// Creates a manager that also moves the physical files behind icons.
     /// Pass <c>null</c> for <paramref name="iconStore"/> to keep the manager
     /// purely in-memory (used by tests and by headless callers).
+    /// Without a <paramref name="sharedRemover"/>, items on the all-users
+    /// desktop are only referenced (they stay on the desktop as well).
     /// </summary>
-    public PaddockManager(SettingsService settingsService, IconStore? iconStore)
+    public PaddockManager(
+        SettingsService settingsService,
+        IconStore? iconStore,
+        ISharedDesktopRemover? sharedRemover = null)
     {
         _settingsService = settingsService;
         _iconStore = iconStore;
+        _sharedRemover = sharedRemover;
     }
 
     /// <summary>The attached file store, or <c>null</c> for in-memory use.</summary>
@@ -115,7 +122,103 @@ public class PaddockManager
         }
 
         // The move may have renamed the item to avoid a collision.
-        existing = FindEntry(paddock, path);
+        return AddEntry(paddock, path, managed);
+    }
+
+    /// <summary>
+    /// Adds several items in one go: one settings write, and — for items on the
+    /// desktop shared by all accounts — at most one request to remove the
+    /// originals, so a drop of five shortcuts never means five permission
+    /// prompts. Returns the entries now in the paddock for these items.
+    ///
+    /// Shared-desktop files are copied into the paddock first and the original
+    /// removed afterwards; if the original cannot be removed (permission
+    /// declined, say) the copy is thrown away and the item is referenced where
+    /// it is instead, exactly as it was before this existed.
+    /// </summary>
+    public IReadOnlyList<IconEntry> AddIconsToPaddock(string paddockId, IEnumerable<string> sourcePaths)
+    {
+        var paddock = GetPaddock(paddockId);
+        if (paddock is null)
+            return [];
+
+        var results = new List<IconEntry>();
+        var sharedCopies = new List<(string Original, string Copy)>();
+
+        using (DeferSave())
+        {
+            foreach (var source in sourcePaths
+                         .Where(p => !string.IsNullOrWhiteSpace(p))
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (_sharedRemover is not null
+                    && _iconStore is not null
+                    && _iconStore.IsOnSharedDesktop(source)
+                    && FindEntry(paddock, source) is null)
+                {
+                    var copy = _iconStore.CopyIntoPaddock(source, paddockId);
+                    if (copy is not null)
+                    {
+                        sharedCopies.Add((source, copy));
+                        continue;
+                    }
+                }
+
+                var entry = AddIconToPaddock(paddockId, source);
+                if (entry is not null)
+                    results.Add(entry);
+            }
+
+            if (sharedCopies.Count > 0)
+                results.AddRange(FinishSharedCopies(paddock, sharedCopies));
+        }
+
+        return results;
+    }
+
+    private List<IconEntry> FinishSharedCopies(PaddockModel paddock, List<(string Original, string Copy)> copies)
+    {
+        IReadOnlyCollection<string> removed;
+
+        try
+        {
+            removed = _sharedRemover!.Remove(copies.Select(c => c.Original).ToList());
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Removing items from the all-users desktop failed.", ex);
+            removed = [];
+        }
+
+        var gone = new HashSet<string>(removed, StringComparer.OrdinalIgnoreCase);
+        var entries = new List<IconEntry>();
+
+        foreach (var (original, copy) in copies)
+        {
+            if (gone.Contains(original))
+            {
+                entries.Add(AddEntry(paddock, copy, managed: true));
+                continue;
+            }
+
+            // Still on the shared desktop: a second, moved copy would only be a
+            // confusing duplicate. Reference the original instead.
+            _iconStore!.DiscardCopy(copy);
+            entries.Add(FindEntry(paddock, original) ?? AddEntry(paddock, original, managed: false));
+        }
+
+        if (gone.Count < copies.Count)
+        {
+            Log.Info($"{copies.Count - gone.Count} all-users desktop item(s) could not be removed " +
+                     "there and are referenced in place instead.");
+        }
+
+        return entries;
+    }
+
+    private IconEntry AddEntry(PaddockModel paddock, string path, bool managed)
+    {
+        var existing = FindEntry(paddock, path);
         if (existing is not null)
             return existing;
 
@@ -283,6 +386,12 @@ public class PaddockManager
             _ => paddock.Icons.ToList()
         };
     }
+
+    /// <summary>
+    /// How many items Paddock has taken off the desktop (moved into a
+    /// paddock's folder). Referenced items do not count: they never left.
+    /// </summary>
+    public int CountMovedIcons() => GetPaddocks().Sum(p => p.Icons.Count(i => i.Managed));
 
     public void SaveLayout()
     {

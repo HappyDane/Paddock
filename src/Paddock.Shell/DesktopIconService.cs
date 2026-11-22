@@ -47,28 +47,46 @@ public sealed class DesktopIconService : IDisposable
     public IconStore CreateIconStore()
     {
         EnsureHiddenStoreRoot();
-        return new IconStore(DesktopRoot, StoreRoot);
+        return new IconStore(DesktopRoot, StoreRoot, CommonDesktopRoot);
     }
 
+    /// <summary>Removes originals from the all-users desktop, asking for permission when needed.</summary>
+    public ISharedDesktopRemover CreateSharedDesktopRemover() => new SharedDesktopRemover(CommonDesktopRoot);
+
     /// <summary>
-    /// Movable top-level items on the desktop — files and folders, minus shell
-    /// bookkeeping files and Paddock's own store folder.
-    ///
-    /// Items on the all-users desktop are deliberately left out: moving them
-    /// would change what every account on the machine sees (and usually needs
-    /// admin rights), so they stay where they are. They can still be dragged
-    /// into a paddock by hand, where they are referenced rather than moved.
+    /// Top-level items shown on this user's desktop — files and folders, minus
+    /// shell bookkeeping files and Paddock's own store folder — including the
+    /// files on the all-users desktop, which Windows shows here too. (Taking
+    /// one of those into a paddock asks for permission; see
+    /// <see cref="SharedDesktopRemover"/>.)
     /// </summary>
     public IReadOnlyList<string> GetDesktopItems()
     {
         var items = new List<string>();
 
-        if (!Directory.Exists(DesktopRoot))
-            return items;
+        AddVisibleEntries(DesktopRoot, items, filesOnly: false);
+
+        if (!string.IsNullOrEmpty(CommonDesktopRoot)
+            && !string.Equals(CommonDesktopRoot, DesktopRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            AddVisibleEntries(CommonDesktopRoot, items, filesOnly: true);
+        }
+
+        return items;
+    }
+
+    private void AddVisibleEntries(string folder, List<string> items, bool filesOnly)
+    {
+        if (!Directory.Exists(folder))
+            return;
 
         try
         {
-            foreach (var entry in Directory.EnumerateFileSystemEntries(DesktopRoot))
+            var entries = filesOnly
+                ? Directory.EnumerateFiles(folder)
+                : Directory.EnumerateFileSystemEntries(folder);
+
+            foreach (var entry in entries)
             {
                 if (IsHiddenOrIgnored(entry))
                     continue;
@@ -78,11 +96,16 @@ public sealed class DesktopIconService : IDisposable
         }
         catch (Exception ex)
         {
-            Log.Warn($"Cannot list the desktop folder '{DesktopRoot}': {ex.Message}");
+            Log.Warn($"Cannot list the desktop folder '{folder}': {ex.Message}");
         }
-
-        return items;
     }
+
+    /// <summary>
+    /// Where each file and folder on the desktop is drawn: its path and the
+    /// centre of its icon in physical screen pixels. Asks Explorer across
+    /// processes, so call it off the UI thread. Empty when Explorer cannot say.
+    /// </summary>
+    public IReadOnlyList<DesktopIconSpot> GetIconSpots() => DesktopFolderView.GetIconSpots();
 
     /// <summary>
     /// Watches the store for changes made outside the app (files dropped into a

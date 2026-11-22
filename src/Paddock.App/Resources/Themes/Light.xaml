@@ -8,17 +8,23 @@
 
     <!-- Paddock surface -->
     <SolidColorBrush x:Key="PaddockDefaultBackground" Color="#F2F2F7" />
-    <SolidColorBrush x:Key="PaddockTitleText" Color="#8E8E93" />
-    <SolidColorBrush x:Key="PaddockIconText" Color="#1C1C1E" />
-    <SolidColorBrush x:Key="PaddockGripDot" Color="#C7C7CC" />
 
     <!-- Icon hover / drop feedback -->
-    <SolidColorBrush x:Key="PaddockIconHover" Color="#14000000" />
     <SolidColorBrush x:Key="PaddockDropHighlight" Color="#990A84FF" />
 
-    <!-- Close button -->
-    <SolidColorBrush x:Key="PaddockCloseBackground" Color="#E5E5EA" />
-    <SolidColorBrush x:Key="PaddockCloseText" Color="#8E8E93" />
+    <!-- Menus, tooltips and the Appearance panel -->
+    <SolidColorBrush x:Key="MenuBackground" Color="#F7FFFFFF" />
+    <SolidColorBrush x:Key="MenuBorder" Color="#1F000000" />
+    <SolidColorBrush x:Key="MenuText" Color="#1C1C1E" />
+    <SolidColorBrush x:Key="MenuTextDisabled" Color="#AEAEB2" />
+    <SolidColorBrush x:Key="MenuHighlight" Color="#007AFF" />
+    <SolidColorBrush x:Key="MenuHighlightText" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="MenuSeparator" Color="#14000000" />
+    <SolidColorBrush x:Key="SegmentBackground" Color="#0F000000" />
+    <SolidColorBrush x:Key="SegmentSelected" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="SegmentSelectedText" Color="#1C1C1E" />
+    <SolidColorBrush x:Key="SliderTrack" Color="#D1D1D6" />
+    <SolidColorBrush x:Key="SwatchRing" Color="#1C1C1E" />
 
     <!-- General UI -->
     <SolidColorBrush x:Key="WindowBackground" Color="#FFFFFF" />

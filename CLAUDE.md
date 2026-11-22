@@ -19,7 +19,8 @@ src/
   Paddock.Shell/     → Windows shell integration (P/Invoke, COM interop)
   Paddock.Installer/ → MSIX packaging project (Windows Application Packaging)
 tests/
-  Paddock.Core.Tests/ → Unit tests for core logic
+  Paddock.Core.Tests/   → Unit tests for core logic
+  Paddock.DesktopSmoke/ → End-to-end test of the real exe on a Windows desktop (CI)
 ```
 
 ## Architecture Rules
@@ -35,13 +36,39 @@ tests/
   shown for the moment the user draws a new paddock.
 - **Z-order, not parenting.** Do *not* `SetParent` into `WorkerW` — a window there
   renders behind the desktop icons and gets no mouse input. `ShellHookService`
-  instead pins each window directly above the window hosting `SHELLDLL_DefView`,
-  re-asserting it from `WM_WINDOWPOSCHANGING` (see `PaddockWindow.WndProc`) and
-  from a periodic re-pin in `PaddockHost`.
+  instead keeps each window *directly above* the window hosting `SHELLDLL_DefView`,
+  wherever that window is: Show Desktop (Win+D) raises it above every app (a
+  full-screen WorkerW on the Windows 10-era desktop, Progman on 24H2), so
+  `HWND_BOTTOM` or "just below the host" hides paddocks then. Remember that
+  `SetWindowPos` puts a window *below* its `hWndInsertAfter`. The slot is
+  re-asserted from `WM_WINDOWPOSCHANGING` (see `PaddockWindow.WndProc`), on every
+  foreground change, and by a periodic re-pin in `PaddockHost`.
 - **Icons leave the desktop by moving the file.** `IconStore` moves items into
   `%USERPROFILE%\Desktop\.Paddock\<paddock-id>` and back out again; the shell only
   draws the top level of the Desktop folder. Nothing is deleted, names are never
-  overwritten, and only items on the user's own desktop are ever moved.
+  overwritten, and only items on the user's own desktop are ever moved — except
+  files on the all-users desktop, which are *copied* in and the original removed
+  via `ISharedDesktopRemover` (an elevated helper run of Paddock.exe, one
+  permission prompt per batch; declining falls back to referencing). While
+  Paddock is closed those icons are not on the desktop; tray → Exit says so
+  (`ExitPromptWindow`) and offers Restore All first. Logoff never asks.
+- **Right-drag on the desktop draws a paddock** without Paddock owning the
+  desktop: `DesktopGestureService` runs a low-level mouse hook on its *own*
+  thread (a hook on a busy UI thread stalls every mouse event in the session).
+  It swallows the right button only when it goes down on bare desktop
+  (`DesktopListView.IsBareDesktop`: Explorer's icon view, `LVM_HITTEST` says no
+  icon), and replays a plain right-click so Explorer's desktop menu still opens.
+  The state machine is `Core/DesktopDrawGesture` (unit-tested). Left-drag stays
+  the desktop's rubber-band selection. Keep the hook callback fast.
+- **A new paddock collects the icons it was drawn over.** Positions and real
+  file paths come from Explorer's own folder view (`DesktopFolderView`:
+  IShellWindows → desktop IShellBrowser → IFolderView), never from icon labels,
+  which hide extensions. Cross-process COM: call it off the UI thread. Which
+  icons count is `Core/DesktopLayout.ItemsUnder` (centre inside; never
+  Paddock's own store folder).
+- **Drops are read in the OLE callback, applied after it.** And after dragging an
+  icon *out*, Paddock never moves the file itself: the drop target (Explorer)
+  does, and the store watcher notices. Moving it too races Explorer.
 - **Coordinates** in `PaddockModel` are screen coordinates in device-independent
   pixels (WPF `Window.Left`/`Top`). Use `ScreenHelper` to convert from Win32
   pixels and to find the right monitor.
@@ -52,6 +79,18 @@ dotnet build                          # Build all projects
 dotnet run --project src/Paddock.App  # Run the app (Windows only)
 dotnet test                           # Run all tests
 ```
+
+### Testing on a real Windows desktop
+`.github/workflows/windows.yml` runs on every push: unit tests and the
+single-file `Paddock.exe` (downloadable artifact `Paddock-win-x64`), then
+`tests/Paddock.DesktopSmoke` against that exe on Windows Server 2022 and 2025.
+The smoke test uses real mouse input and UI Automation to drag desktop icons
+in and out, sort, click under an app window, press Win+D, restart and remove a
+paddock, checking files, `settings.json`, what is on screen, and `paddock.log`.
+Screenshots of every step (and of every failure) are uploaded as artifacts.
+Run it locally only on a throwaway machine: it moves desktop files and wipes
+Paddock's settings, and refuses to start without `PADDOCK_SMOKE_TEST=1`.
+Change anything about windows, z-order or drag-and-drop → make sure it passes.
 
 ### Building from a non-Windows agent/CI box
 The projects target `net8.0-windows`, so add `-p:EnableWindowsTargeting=true`.
@@ -69,7 +108,9 @@ Output: `artifacts/publish/win-x64/Paddock.exe` — a single self-contained exec
 
 ### MSIX package (secondary)
 Build the `Paddock.Installer` project in Visual Studio to produce an MSIX package.
-Requires the Windows Application Packaging Project tooling.
+Requires the Windows Application Packaging Project tooling. It is deliberately
+*not* part of the solution's default build: the dotnet CLI cannot build a
+`.wapproj`, and having it there broke every `dotnet build -c Release`.
 
 ## Key Patterns
 - **Settings**: JSON file at `%AppData%/Paddock/settings.json` (see `AppPaths`).
@@ -96,6 +137,15 @@ Requires the Windows Application Packaging Project tooling.
 1. Add P/Invoke signature in `Shell/NativeMethods.cs` (it stays `internal`)
 2. Create or extend a service in `Shell/` with a clean interface
 3. Register the service in `App.xaml.cs`
+
+### Changing how paddocks look
+Per-paddock look lives in `PaddockStyle` (colour, opacity, `IconSize`, `Font`)
+and is edited in `Views/AppearancePanel` (a popover opened from the paddock's
+menu). Text colour is derived, never stored: `ColorContrast.PrefersDarkText`
+picks light or dark labels for the paddock's colour and opacity. App-wide menu
+and tooltip styling is `Resources/Controls.xaml`, coloured by the active theme
+dictionary — keep both themes' keys in step. There is deliberately no close
+button on a paddock: **Close Paddock** is in its right-click menu.
 
 ### Changing anything about a paddock's window
 `PaddockHost` creates and owns `PaddockWindow`s; `PaddockControl` handles the

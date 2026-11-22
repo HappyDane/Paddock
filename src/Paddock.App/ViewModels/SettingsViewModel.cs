@@ -44,6 +44,18 @@ public class SettingsViewModel : INotifyPropertyChanged
         set { _settings.Settings.QuickHideEnabled = value; _settings.Save(); OnPropertyChanged(); }
     }
 
+    public bool DrawOnDesktop
+    {
+        get => _settings.Settings.DrawOnDesktop;
+        set
+        {
+            _settings.Settings.DrawOnDesktop = value;
+            _settings.Save();
+            ((App)Application.Current).SetDesktopDrawing(value);
+            OnPropertyChanged();
+        }
+    }
+
     public bool SnapEnabled
     {
         get => _settings.Settings.SnapEnabled;

@@ -27,6 +27,13 @@ internal sealed class PaddockHost : IDisposable
     private readonly List<PaddockWindow> _windows = new();
     private readonly DispatcherTimer _zOrderTimer;
 
+    /// <summary>
+    /// A second re-pin shortly after a foreground change. Show Desktop moves
+    /// the icon view into a different window on some Windows versions, and that
+    /// can land just after the foreground notification does.
+    /// </summary>
+    private readonly DispatcherTimer _settleTimer;
+
     private bool _paddocksHidden;
     private bool _disposed;
 
@@ -36,6 +43,13 @@ internal sealed class PaddockHost : IDisposable
 
         _zOrderTimer = new DispatcherTimer { Interval = ZOrderInterval };
         _zOrderTimer.Tick += (_, _) => PinAllToDesktop();
+
+        _settleTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _settleTimer.Tick += (_, _) =>
+        {
+            _settleTimer.Stop();
+            PinAllToDesktop();
+        };
     }
 
     internal int PaddockCount => _windows.Count;
@@ -53,6 +67,8 @@ internal sealed class PaddockHost : IDisposable
 
         UpdateZOrderTimer();
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+        _app.ShellHookService.ForegroundChanged += OnForegroundChanged;
+        _app.ShellHookService.StartForegroundTracking();
         _app.DesktopIconService.WatchStore(OnStoreChanged);
 
         LogStartupState();
@@ -83,10 +99,16 @@ internal sealed class PaddockHost : IDisposable
         if (area is null)
             return;
 
-        CreatePaddock(area.Value);
+        CreatePaddock(area.Value, beginRename: true, collectIconsUnderneath: true);
     }
 
-    internal void CreatePaddock(Rect screenArea)
+    /// <summary>
+    /// Creates a paddock over a screen area (DIPs). With <paramref name="collectIconsUnderneath"/>
+    /// the desktop icons it was drawn over move into it, as with Fences. With
+    /// <paramref name="beginRename"/> its title then opens for editing, so a
+    /// freshly drawn paddock can be named without a trip to the context menu.
+    /// </summary>
+    internal void CreatePaddock(Rect screenArea, bool beginRename = false, bool collectIconsUnderneath = false)
     {
         var model = _app.PaddockManager.CreatePaddock(
             title: "New Paddock",
@@ -105,6 +127,47 @@ internal sealed class PaddockHost : IDisposable
         var window = CreateWindow(model);
         window.PinToDesktop();
         UpdateZOrderTimer();
+
+        Log.Info($"Created paddock at {model.X:0},{model.Y:0} {model.Width:0}x{model.Height:0}.");
+
+        if (collectIconsUnderneath)
+            CollectIconsUnderneath(window, beginRename);
+        else if (beginRename)
+            window.ViewModel.BeginRenameTitle();
+    }
+
+    /// <summary>
+    /// Moves the desktop icons a new paddock covers into it, then (optionally)
+    /// opens its title for naming. Explorer is asked where its icons are on a
+    /// background thread; the moves themselves happen here, as one batch — one
+    /// settings write, and at most one permission prompt for all-users items.
+    /// </summary>
+    private async void CollectIconsUnderneath(PaddockWindow window, bool beginRename)
+    {
+        try
+        {
+            var spots = await Task.Run(_app.DesktopIconService.GetIconSpots);
+
+            var vm = window.ViewModel;
+            var scale = ScreenHelper.DipScale;
+            var area = new LayoutBounds(vm.X * scale, vm.Y * scale, vm.Width * scale, vm.Height * scale);
+            var items = DesktopLayout.ItemsUnder(spots, area, _app.IconStore);
+
+            if (items.Count > 0 && _windows.Contains(window))
+            {
+                vm.AddIcons(items);
+                _app.DesktopIconService.NotifyShellOfDesktopChange();
+            }
+
+            Log.Info($"New paddock collected {items.Count} of the {spots.Count} desktop icon(s) found.");
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Could not collect the icons under the new paddock.", ex);
+        }
+
+        if (beginRename && _windows.Contains(window))
+            window.ViewModel.BeginRenameTitle();
     }
 
     internal void RemovePaddock(PaddockWindow window)
@@ -227,7 +290,9 @@ internal sealed class PaddockHost : IDisposable
 
         _disposed = true;
         _zOrderTimer.Stop();
+        _settleTimer.Stop();
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        _app.ShellHookService.ForegroundChanged -= OnForegroundChanged;
 
         foreach (var window in _windows.ToList())
         {
@@ -301,6 +366,21 @@ internal sealed class PaddockHost : IDisposable
 
             PinAllToDesktop();
         });
+    }
+
+    /// <summary>
+    /// Win+D raises the desktop above every application. Following it straight
+    /// away keeps paddocks — and the icons inside them — on screen when the user
+    /// has just asked to see their desktop.
+    /// </summary>
+    private void OnForegroundChanged()
+    {
+        if (_disposed)
+            return;
+
+        PinAllToDesktop();
+        _settleTimer.Stop();
+        _settleTimer.Start();
     }
 
     private void OnStoreChanged()
