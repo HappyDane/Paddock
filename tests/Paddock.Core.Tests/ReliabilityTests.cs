@@ -286,3 +286,126 @@ internal static class TestExtensions
         return value;
     }
 }
+
+/// <summary>
+/// Each paddock folder describes its paddock, so the folders alone rebuild
+/// the layout when settings.json is lost — and a deleted paddock never returns.
+/// </summary>
+public class FolderMetadataTests : IDisposable
+{
+    private readonly string _root;
+    private readonly string _desktop;
+    private readonly string _settingsPath;
+    private readonly IconStore _store;
+    private readonly PaddockManager _manager;
+
+    public FolderMetadataTests()
+    {
+        _root = Path.Combine(Path.GetTempPath(), $"paddock_meta_{Guid.NewGuid():N}");
+        _desktop = Path.Combine(_root, "Desktop");
+        Directory.CreateDirectory(_desktop);
+        _settingsPath = Path.Combine(_root, "settings.json");
+
+        _store = new IconStore(_desktop, Path.Combine(_desktop, ".Paddock"));
+        _manager = new PaddockManager(new SettingsService(_settingsPath), _store);
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_root, recursive: true); } catch { }
+    }
+
+    private string DesktopFile(string name)
+    {
+        var path = Path.Combine(_desktop, name);
+        File.WriteAllText(path, "x");
+        return path;
+    }
+
+    private string MetadataPath(string id) => Path.Combine(_store.GetPaddockFolder(id), IconStore.MetadataName);
+
+    [Fact]
+    public void SavingWritesEachPaddocksDescription_IntoItsFolder()
+    {
+        var docs = _manager.CreatePaddock("Docs", 40, 50, 320, 240);
+
+        var saved = SettingsService.FromJson<PaddockModel>(File.ReadAllText(MetadataPath(docs.Id)));
+
+        Assert.NotNull(saved);
+        Assert.Equal(("Docs", 40.0, 50.0, 320.0, 240.0), (saved!.Title, saved.X, saved.Y, saved.Width, saved.Height));
+        Assert.Empty(saved.Icons);
+    }
+
+    [Fact]
+    public void ADescriptionIsRewrittenOnlyWhenItChanges()
+    {
+        var docs = _manager.CreatePaddock("Docs", 0, 0, 300, 250);
+        var path = MetadataPath(docs.Id);
+        File.SetLastWriteTimeUtc(path, new DateTime(2020, 1, 1));
+
+        _manager.AddIconToPaddock(docs.Id, DesktopFile("a.pdf")); // icons are not part of it
+        Assert.Equal(new DateTime(2020, 1, 1), File.GetLastWriteTimeUtc(path));
+
+        docs.Title = "Papers";
+        _manager.SaveLayout();
+        Assert.Contains("Papers", File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void TheDescription_IsNeverAnItem_NorOverwrittenByOne()
+    {
+        var docs = _manager.CreatePaddock("Docs", 0, 0, 300, 250);
+        var lookalike = DesktopFile(IconStore.MetadataName);
+
+        var entry = _manager.AddIconToPaddock(docs.Id, lookalike);
+
+        Assert.NotNull(entry);
+        Assert.NotEqual(IconStore.MetadataName, Path.GetFileName(entry!.DesktopPath));
+        Assert.Equal([entry.DesktopPath], _store.ListPaddockItems(docs.Id));
+        Assert.Contains("Docs", File.ReadAllText(MetadataPath(docs.Id)));
+    }
+
+    [Fact]
+    public void LostSettings_RebuildThePaddocksFromTheirFolders()
+    {
+        var docs = _manager.CreatePaddock("Docs", 40, 50, 320, 240);
+        docs.Style.BackgroundColor = "#1E4F8A";
+        _manager.SaveLayout();
+        _manager.AddIconToPaddock(docs.Id, DesktopFile("a.pdf"));
+        var empty = _manager.CreatePaddock("Empty one", 400, 50, 300, 250);
+
+        File.WriteAllText(_settingsPath, "{ not json");
+        var fresh = new PaddockManager(new SettingsService(_settingsPath), _store);
+
+        var orphans = fresh.FindOrphanedFolders();
+        Assert.Equal(new[] { docs.Id, empty.Id }.Order(), orphans.Order());
+
+        foreach (var id in orphans)
+            Assert.NotNull(fresh.RestoreFromFolder(id));
+        fresh.ReconcilePaddocks();
+
+        var rebuilt = fresh.GetPaddock(docs.Id)!;
+        Assert.Equal(("Docs", 40.0, 50.0, "#1E4F8A"), (rebuilt.Title, rebuilt.X, rebuilt.Y, rebuilt.Style.BackgroundColor));
+        Assert.Single(rebuilt.Icons);
+        Assert.Equal("Empty one", fresh.GetPaddock(empty.Id)!.Title);
+    }
+
+    [Fact]
+    public void ADeletedPaddock_DoesNotComeBack_EvenIfItsFolderStays()
+    {
+        var docs = _manager.CreatePaddock("Docs", 0, 0, 300, 250);
+        var folder = _store.GetPaddockFolder(docs.Id);
+
+        // Something keeps the folder from being removed (a stray file that will not move, say).
+        Directory.CreateDirectory(Path.Combine(folder, "stuck"));
+        _manager.DeletePaddock(docs.Id);
+        Directory.CreateDirectory(folder);
+
+        Assert.False(File.Exists(MetadataPath(docs.Id)));
+        Assert.Null(_manager.RestoreFromFolder(docs.Id));
+    }
+
+    [Fact]
+    public void ExitingOnPurpose_IsNeverRestarted_WhateverTheExitCode()
+        => Assert.False(RestartPolicy.Decide(unchecked((int)0xC0000005), TimeSpan.FromMinutes(5), 0, false, exitedOnPurpose: true).Restart);
+}

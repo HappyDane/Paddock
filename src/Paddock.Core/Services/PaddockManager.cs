@@ -10,6 +10,9 @@ public class PaddockManager
     private readonly IconStore? _iconStore;
     private readonly ISharedDesktopRemover? _sharedRemover;
 
+    /// <summary>What each paddock folder's description last said, so unchanged ones are not rewritten.</summary>
+    private readonly Dictionary<string, string> _writtenMetadata = new(StringComparer.Ordinal);
+
     public PaddockManager(SettingsService settingsService)
         : this(settingsService, null)
     {
@@ -30,7 +33,50 @@ public class PaddockManager
         _settingsService = settingsService;
         _iconStore = iconStore;
         _sharedRemover = sharedRemover;
+
+        if (_iconStore is not null)
+            _settingsService.Saved += WriteFolderMetadata;
     }
+
+    /// <summary>
+    /// Writes each paddock's description (everything but its icons) into its
+    /// folder, so the folders alone can rebuild the layout if settings.json is
+    /// lost. Runs after every settings write; only changed ones touch the disk.
+    /// </summary>
+    public void WriteFolderMetadata()
+    {
+        if (_iconStore is null)
+            return;
+
+        foreach (var paddock in GetPaddocks().ToList())
+        {
+            var json = SettingsService.ToJson(DescriptionOf(paddock));
+            if (_writtenMetadata.TryGetValue(paddock.Id, out var previous) && previous == json)
+                continue;
+
+            _iconStore.WriteMetadata(paddock.Id, json);
+            _writtenMetadata[paddock.Id] = json;
+        }
+    }
+
+    /// <summary>A paddock as its folder describes it: the same, minus its icons (the folder holds those).</summary>
+    private static PaddockModel DescriptionOf(PaddockModel paddock) => new()
+    {
+        Id = paddock.Id,
+        Title = paddock.Title,
+        TitleVisibility = paddock.TitleVisibility,
+        X = paddock.X,
+        Y = paddock.Y,
+        Width = paddock.Width,
+        Height = paddock.Height,
+        Style = paddock.Style,
+        Icons = [],
+        Locked = paddock.Locked,
+        IsRolledUp = paddock.IsRolledUp,
+        ExcludeFromQuickHide = paddock.ExcludeFromQuickHide,
+        SortBy = paddock.SortBy,
+        SortAscending = paddock.SortAscending,
+    };
 
     /// <summary>The attached file store, or <c>null</c> for in-memory use.</summary>
     public IconStore? Store => _iconStore;
@@ -82,6 +128,7 @@ public class PaddockManager
             return false;
 
         _iconStore?.EvacuatePaddock(id);
+        _writtenMetadata.Remove(id);
 
         paddocks.Remove(paddock);
         SaveLayout();
@@ -383,10 +430,11 @@ public class PaddockManager
 
     /// <summary>
     /// Folders in the store that no paddock owns — in any layout profile, not
-    /// just the active one — but that still hold items. Nothing shows those
-    /// items, so they would be lost from sight: after settings.json was
-    /// unreadable, say, or a paddock entry was removed by hand. Empty ownerless
-    /// folders are tidied away. Returns the folder names (paddock ids).
+    /// just the active one — but that still hold items or a paddock's
+    /// description. Nothing shows those, so they would be lost from sight:
+    /// after settings.json was unreadable, say, or a paddock entry was removed
+    /// by hand. Empty ownerless folders are tidied away. Returns the folder
+    /// names (paddock ids).
     /// </summary>
     public IReadOnlyList<string> FindOrphanedFolders()
     {
@@ -405,13 +453,39 @@ public class PaddockManager
             if (owned.Contains(id))
                 continue;
 
-            if (_iconStore.ListPaddockItems(id).Count > 0)
+            if (_iconStore.ListPaddockItems(id).Count > 0 || _iconStore.ReadMetadata(id) is not null)
                 orphans.Add(id);
             else
                 _iconStore.RemoveFolderIfEmpty(id);
         }
 
         return orphans;
+    }
+
+    /// <summary>
+    /// Rebuilds an orphaned folder's paddock from the description kept in it —
+    /// its title, place and look — in the active layout. Returns null when the
+    /// folder has no readable description (then use <see cref="AdoptFolder"/>).
+    /// Call <see cref="ReconcilePaddocks"/> afterwards to list its items.
+    /// </summary>
+    public PaddockModel? RestoreFromFolder(string folderId)
+    {
+        if (_iconStore?.ReadMetadata(folderId) is not { } json
+            || SettingsService.FromJson<PaddockModel>(json) is not { } paddock)
+        {
+            return null;
+        }
+
+        // The folder is the authority on which paddock this is, and on its items.
+        paddock.Id = folderId;
+        paddock.Icons = [];
+        paddock.Style ??= new PaddockStyle();
+        if (string.IsNullOrWhiteSpace(paddock.Title))
+            paddock.Title = "Recovered";
+
+        _settingsService.GetActiveCorral().Paddocks.Add(paddock);
+        SaveLayout();
+        return paddock;
     }
 
     /// <summary>

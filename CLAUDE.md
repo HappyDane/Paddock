@@ -92,21 +92,32 @@ tests/
   the user's own desktop (`PaddockManager.MoveDesktopItemsIntoPaddock`).
 - **Icons must never end up out of sight.** While Paddock is not running, the
   icons in paddocks are not on the desktop, so:
-  - `Program.Main` (the real entry point, before WPF loads) runs a small
-    watchdog per Paddock process (`Shell/CrashWatchdog`; Paddock restarts it if
-    it goes). It restarts Paddock after a *crash* exit code — never after Exit,
-    a Task Manager / `Kill()` end, or while Windows signs out — and after a
-    *freeze*: the UI thread beats into shared memory every 2 s
-    (`Shell/AppHeartbeat`, input priority), and 30 s of silence
+  - `Program.Main` is the one place that decides what a Paddock.exe process
+    is: the watchdog, the elevated all-users-desktop helper, `--restore-all`
+    (all before WPF loads), or the app. Each app process is watched by a small
+    watchdog process (`Shell/CrashWatchdog`), which `App/Services/Supervision`
+    starts — and starts again if it goes. Supervision also keeps the UI
+    thread's heartbeat in shared memory (`Shell/AppHeartbeat`, every 2 s at
+    input priority) and, first thing in `OnExit`, says Paddock is closing *on
+    purpose*. The watchdog trusts that word; without it, a crash exit code means
+    restart and a Task Manager / `Kill()` end does not. 30 s without a heartbeat
     (`Core/HangDetector`; not in the first minute, under a debugger, or just
-    after sleep) gets it ended and restarted. **A wait that blocks the UI
-    thread on purpose must be wrapped in `AppHeartbeat.Current?.WaitingOnPurpose()`**
-    (the permission prompt for all-users desktop items is). Crashes at start-up
-    are retried after 2/10/30 s; after 3 quick restarts it gives up, puts every
-    icon back on the desktop and says so (`Core/RestartPolicy`).
+    after sleep) means frozen: ended and restarted. **A wait that blocks the UI
+    thread on purpose must be announced** through the `IWaitAnnouncer` it is
+    given (`Supervision.Waits`) — the permission prompt for all-users desktop
+    items is. Start-up crashes are retried after 2/10/30 s; after 3 quick
+    restarts it gives up, puts every icon back on the desktop and says so
+    (`Core/RestartPolicy`).
+  - Every paddock folder keeps a hidden `.paddock.json`: its paddock minus the
+    icons (written after each settings save, only when changed). Without
+    settings.json the folders alone rebuild the layout. The name is reserved —
+    never an item, never overwritten by one — and deleting a paddock removes it
+    first, so a folder that will not go away comes back as "Recovered", never as
+    the paddock that was closed.
   - On startup, a store folder no paddock owns in *any* profile (unreadable
-    settings, a hand-edited file) becomes a "Recovered" paddock, and items loose
-    in the store root go back to the desktop (`PaddockHost.RecoverLostIcons`).
+    settings, a hand-edited file) gets its paddock back — rebuilt from its
+    `.paddock.json`, or else as "Recovered" — and items loose in the store root
+    go back to the desktop (`PaddockHost.RecoverLostIcons`).
   - `Paddock.exe --restore-all [--quiet]` empties the whole store onto the desktop
     without settings or a running Paddock; `.Paddock\README.txt` says so.
   - Self-healing: paddocks re-sync with their folders every minute and when the
@@ -136,7 +147,7 @@ in and out, sort, click under an app window, press Win+D, double-click the
 desktop to hide and show, pick a wallpaper pixel with the eyedropper, turn on
 frosted glass and a tint, let an auto-organize rule route a new file (and not
 an Office-style save, nor an item dragged back out), restart and remove a
-paddock, recover a folder `settings.json` forgot, survive a crash and a frozen
+paddock, rebuild paddocks from folders `settings.json` forgot, survive a crash and a frozen
 UI thread (the watchdog restarts it), and `--restore-all` with Paddock closed —
 checking files,
 `settings.json`, what is on screen, and `paddock.log`.

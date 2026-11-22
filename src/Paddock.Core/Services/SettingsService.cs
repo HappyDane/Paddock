@@ -23,6 +23,25 @@ public class SettingsService
 
     public AppSettings Settings => _settings;
 
+    /// <summary>Raised after settings.json has actually been written (once per deferred batch).</summary>
+    public event Action? Saved;
+
+    /// <summary>Serializes with the same options as settings.json.</summary>
+    public static string ToJson<T>(T value) => JsonSerializer.Serialize(value, JsonOptions);
+
+    /// <summary>Reads JSON written by <see cref="ToJson{T}"/>; null when it cannot be read.</summary>
+    public static T? FromJson<T>(string json) where T : class
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<T>(json, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     public SettingsService()
         : this(AppPaths.SettingsFile)
     {
@@ -97,6 +116,8 @@ public class SettingsService
 
     public void Save()
     {
+        bool wrote;
+
         lock (_lock)
         {
             if (_deferDepth > 0)
@@ -105,8 +126,11 @@ public class SettingsService
                 return;
             }
 
-            WriteToDisk();
+            wrote = WriteToDisk();
         }
+
+        if (wrote)
+            Saved?.Invoke();
     }
 
     public CorralModel GetActiveCorral()
@@ -119,8 +143,8 @@ public class SettingsService
         return defaultCorral;
     }
 
-    /// <summary>Must be called while holding <see cref="_lock"/>.</summary>
-    private void WriteToDisk()
+    /// <summary>Must be called while holding <see cref="_lock"/>. Returns true when the file was written.</summary>
+    private bool WriteToDisk()
     {
         try
         {
@@ -128,6 +152,7 @@ public class SettingsService
             var tempPath = _settingsPath + ".tmp";
             File.WriteAllText(tempPath, json);
             File.Move(tempPath, _settingsPath, overwrite: true);
+            return true;
         }
         catch (Exception ex)
         {
@@ -137,16 +162,20 @@ public class SettingsService
             {
                 var json = JsonSerializer.Serialize(_settings, JsonOptions);
                 File.WriteAllText(_settingsPath, json);
+                return true;
             }
             catch (Exception fallbackEx)
             {
                 Log.Error("Could not save settings; will retry on the next change.", fallbackEx);
+                return false;
             }
         }
     }
 
     private void EndDefer()
     {
+        var wrote = false;
+
         lock (_lock)
         {
             if (_deferDepth > 0)
@@ -156,8 +185,11 @@ public class SettingsService
                 return;
 
             _saveDeferred = false;
-            WriteToDisk();
+            wrote = WriteToDisk();
         }
+
+        if (wrote)
+            Saved?.Invoke();
     }
 
     private sealed class DeferScope(SettingsService owner) : IDisposable

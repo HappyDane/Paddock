@@ -45,9 +45,14 @@ public static class RestartPolicy
     /// </summary>
     public static bool IsCrash(int exitCode) => exitCode < 0 && exitCode != -1;
 
-    /// <summary>Paddock ended with this exit code after running this long.</summary>
-    public static RestartDecision Decide(int exitCode, TimeSpan ran, int restartsSoFar, bool sessionEnding)
-        => IsCrash(exitCode)
+    /// <summary>
+    /// Paddock ended with this exit code after running this long.
+    /// <paramref name="exitedOnPurpose"/> is Paddock's own word that it was
+    /// closing (it says so before it exits): that settles it, whatever the
+    /// exit code. Without it, the exit code tells a crash from a kill.
+    /// </summary>
+    public static RestartDecision Decide(int exitCode, TimeSpan ran, int restartsSoFar, bool sessionEnding, bool exitedOnPurpose = false)
+        => !exitedOnPurpose && IsCrash(exitCode)
             ? DecideRestart(ran, restartsSoFar, sessionEnding, "it crashed")
             : new RestartDecision(false, 0, TimeSpan.Zero, "it was closed or ended on purpose");
 

@@ -20,6 +20,9 @@ internal sealed class SmokeTest
 
     /// <summary>A paddock folder settings.json does not list: Paddock must not leave its icon out of sight.</summary>
     private const string OrphanId = "recov001";
+
+    /// <summary>Another, which still describes its paddock: it must come back as that paddock, where it was.</summary>
+    private const string DescribedId = "meta0001";
     private const string PaddockTitle = "Smoke Paddock";
 
     private static readonly TimeSpan DefaultWait = TimeSpan.FromSeconds(10);
@@ -61,7 +64,7 @@ internal sealed class SmokeTest
         }
 
         Step("The paddock is visible on the desktop", PaddockIsVisible);
-        Step("Icons in a paddock folder settings.json does not list come back in a Recovered paddock", RecoversOrphanedFolder);
+        Step("Paddock folders settings.json does not list come back: rebuilt from their description, or as Recovered", RecoversOrphanedFolder);
         Step("Dragging a desktop icon in moves it into the paddock", DragOneIconIn);
         Step("Dropping two desktop files at once moves both", DragTwoIconsIn);
         Step("The paddock shows its icons sorted by name", () => ExpectOrder("Smoke Alpha", "Smoke Bravo", "Smoke Charlie"));
@@ -117,9 +120,16 @@ internal sealed class SmokeTest
         MakeDesktopFile("Smoke Bravo.txt", 100, new DateTime(2022, 1, 1));
         MakeDesktopFile("Smoke Charlie.txt", 200, new DateTime(2021, 1, 1));
 
-        // Left in the store by a paddock settings.json has forgotten.
+        // Left in the store by paddocks settings.json has forgotten: one bare,
+        // one still holding the description every paddock folder keeps.
         Directory.CreateDirectory(Path.Combine(Store, OrphanId));
         File.WriteAllText(Path.Combine(Store, OrphanId, "Smoke Orphan.txt"), "orphan");
+        Directory.CreateDirectory(Path.Combine(Store, DescribedId));
+        File.WriteAllText(Path.Combine(Store, DescribedId, "Smoke Kept.txt"), "kept");
+        File.WriteAllText(Path.Combine(Store, DescribedId, ".paddock.json"), $$"""
+            { "id": "{{DescribedId}}", "title": "Smoke Rebuilt", "titleVisibility": "always",
+              "x": 40, "y": 430, "width": 260, "height": 180 }
+            """);
 
         // Already on the desktop when Paddock starts, and matching its rule:
         // saving it must not count as a new arrival.
@@ -202,6 +212,28 @@ internal sealed class SmokeTest
         WaitUntil(() => FindAppWindow("Recovered") == IntPtr.Zero, "the Recovered paddock to close");
 
         File.Delete(onDesktop);
+
+        // The folder that described itself is its old paddock again: its title, its place.
+        var rebuilt = IntPtr.Zero;
+        WaitUntil(() => (rebuilt = FindAppWindow("Smoke Rebuilt")) != IntPtr.Zero, "the described paddock to be rebuilt",
+            onTimeout: DescribeAppWindows);
+        Native.GetWindowRect(rebuilt, out var placed);
+        Info($"Rebuilt paddock at {placed}.");
+        Check(Math.Abs(placed.Left - 40) <= 4 && Math.Abs(placed.Top - 430) <= 4 && Math.Abs(placed.Width - 260) <= 4,
+            $"The rebuilt paddock is at {placed}, not where its description put it (40,430, 260 wide).");
+        WaitUntil(() => ItemsIn(rebuilt).Contains("Smoke Kept"), "'Smoke Kept' to show in it");
+        Check(FindAppWindow("Recovered 2") == IntPtr.Zero, "The described folder came back as a Recovered paddock.");
+
+        Native.RightClick(new Point(placed.Right - 40, placed.Top + 60));
+        close = WaitFor(() => FindMenuItem("Close Paddock"), "the rebuilt paddock's menu", TimeSpan.FromSeconds(5));
+        ((InvokePattern)close.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+
+        var kept = Path.Combine(_desktop, "Smoke Kept.txt");
+        WaitUntil(() => File.Exists(kept), "'Smoke Kept.txt' to return to the desktop");
+        WaitUntil(() => FindAppWindow("Smoke Rebuilt") == IntPtr.Zero, "the rebuilt paddock to close");
+        Check(!Directory.Exists(Path.Combine(Store, DescribedId)), "The closed paddock's folder (and description) stayed behind.");
+
+        File.Delete(kept);
         Native.RefreshDesktop(_desktop);
     }
 
@@ -641,10 +673,7 @@ internal sealed class SmokeTest
         // Something to restore that settings.json has never heard of.
         Directory.CreateDirectory(Path.Combine(Store, "rest0001"));
         File.WriteAllText(Path.Combine(Store, "rest0001", "Smoke Restore.txt"), "restore me");
-        var inStore = Directory.EnumerateFiles(Store, "*", SearchOption.AllDirectories)
-            .Where(p => Path.GetDirectoryName(p) != Store)
-            .Select(Path.GetFileName)
-            .ToList();
+        var inStore = ItemsInStore().Select(Path.GetFileName).ToList();
         Info($"In the store: {string.Join(", ", inStore)}.");
 
         using var restore = Process.Start(new ProcessStartInfo(_exe, "--restore-all --quiet") { UseShellExecute = false })!;
@@ -654,14 +683,22 @@ internal sealed class SmokeTest
         foreach (var name in inStore)
             Check(File.Exists(Path.Combine(_desktop, name!)), $"'{name}' is not back on the desktop.");
 
-        var left = Directory.EnumerateFiles(Store, "*", SearchOption.AllDirectories)
-            .Where(p => Path.GetDirectoryName(p) != Store)
-            .ToList();
+        var left = ItemsInStore();
         Check(left.Count == 0, $"Still in the store: {string.Join(", ", left.Select(Path.GetFileName))}.");
         Check(File.Exists(Path.Combine(Store, "README.txt")), "The store's README went too.");
 
         File.Delete(Path.Combine(_desktop, "Smoke Restore.txt"));
     }
+
+    /// <summary>
+    /// Files in the paddock folders — icons, that is: not the store's README,
+    /// nor the description each paddock folder keeps of its paddock.
+    /// </summary>
+    private List<string> ItemsInStore()
+        => Directory.EnumerateFiles(Store, "*", SearchOption.AllDirectories)
+            .Where(p => Path.GetDirectoryName(p) != Store)
+            .Where(p => !Path.GetFileName(p).StartsWith(".paddock.json", StringComparison.OrdinalIgnoreCase))
+            .ToList();
 
     private void Restart()
     {
@@ -681,7 +718,10 @@ internal sealed class SmokeTest
 
     private void RemovePaddock()
     {
-        var inside = Directory.EnumerateFiles(PaddockFolder).Select(Path.GetFileName).ToList();
+        var inside = Directory.EnumerateFiles(PaddockFolder)
+            .Select(Path.GetFileName)
+            .Where(n => !n!.StartsWith(".paddock.json", StringComparison.OrdinalIgnoreCase))
+            .ToList();
         Check(inside.Count > 0, "Nothing in the paddock to return.");
 
         InvokeMenu("Close Paddock");

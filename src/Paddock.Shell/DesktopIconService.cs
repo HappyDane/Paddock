@@ -53,8 +53,12 @@ public sealed class DesktopIconService : IDisposable
         return store;
     }
 
-    /// <summary>Removes originals from the all-users desktop, asking for permission when needed.</summary>
-    public ISharedDesktopRemover CreateSharedDesktopRemover() => new SharedDesktopRemover(CommonDesktopRoot);
+    /// <summary>
+    /// Removes originals from the all-users desktop, asking for permission when
+    /// needed; <paramref name="waits"/> hears about the wait for the answer.
+    /// </summary>
+    public ISharedDesktopRemover CreateSharedDesktopRemover(IWaitAnnouncer? waits = null)
+        => new SharedDesktopRemover(CommonDesktopRoot, waits);
 
     /// <summary>
     /// Top-level items shown on this user's desktop — files and folders, minus

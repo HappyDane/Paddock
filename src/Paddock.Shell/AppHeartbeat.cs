@@ -9,14 +9,17 @@ namespace Paddock.Shell;
 /// seconds (<see cref="Beat"/>); the watchdog reads them
 /// (<see cref="Open"/>). Around a wait that blocks the UI thread on purpose —
 /// the answer to a permission prompt — Paddock says so
-/// (<see cref="WaitingOnPurpose"/>), and the silence does not count.
+/// (<see cref="WaitingOnPurpose"/>), and the silence does not count. And
+/// before it closes, it says that too (<see cref="MarkExitingOnPurpose"/>),
+/// so the watchdog never has to guess from an exit code.
 /// Times come from GetTickCount64, a clock every process shares.
 /// </summary>
-public sealed class AppHeartbeat : IDisposable
+public sealed class AppHeartbeat : IWaitAnnouncer, IDisposable
 {
     private const int BeatOffset = 0;
     private const int WaitingOffset = 8;
-    private const int Size = 16;
+    private const int ExitingOffset = 16;
+    private const int Size = 24;
 
     private readonly MemoryMappedFile _file;
     private readonly MemoryMappedViewAccessor _view;
@@ -29,9 +32,6 @@ public sealed class AppHeartbeat : IDisposable
         Beat();
     }
 
-    /// <summary>This process's heartbeat, once <see cref="Start"/> has run.</summary>
-    public static AppHeartbeat? Current { get; private set; }
-
     private static string NameFor(int processId) => $@"Local\Paddock.Heartbeat.{processId}";
 
     /// <summary>Creates this process's heartbeat. Without one, only crashes are watched for.</summary>
@@ -39,8 +39,7 @@ public sealed class AppHeartbeat : IDisposable
     {
         try
         {
-            Current = new AppHeartbeat(MemoryMappedFile.CreateNew(NameFor(Environment.ProcessId), Size));
-            return Current;
+            return new AppHeartbeat(MemoryMappedFile.CreateNew(NameFor(Environment.ProcessId), Size));
         }
         catch (Exception ex)
         {
@@ -63,13 +62,13 @@ public sealed class AppHeartbeat : IDisposable
         return new WaitScope(this);
     }
 
+    /// <summary>Paddock is closing because it was asked to: do not start it again.</summary>
+    public void MarkExitingOnPurpose() => _view.Write(ExitingOffset, 1L);
+
     public void Dispose()
     {
         _view.Dispose();
         _file.Dispose();
-
-        if (ReferenceEquals(Current, this))
-            Current = null;
     }
 
     /// <summary>Reads another process's heartbeat, or returns null when it has none.</summary>
@@ -108,6 +107,9 @@ public sealed class AppHeartbeat : IDisposable
 
         /// <summary>The UI thread is blocked on purpose.</summary>
         public bool WaitingOnPurpose => _view.ReadInt64(WaitingOffset) > 0;
+
+        /// <summary>Paddock said it was closing on purpose. Still readable after it has ended.</summary>
+        public bool ExitingOnPurpose => _view.ReadInt64(ExitingOffset) != 0;
 
         public void Dispose()
         {

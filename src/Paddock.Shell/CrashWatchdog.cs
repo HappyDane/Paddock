@@ -100,6 +100,14 @@ public static class CrashWatchdog
                     continue;
                 }
 
+                if (heartbeat.ExitingOnPurpose)
+                {
+                    // Stuck on its way out: finish the job, but it was closing anyway.
+                    Log.Warn("Paddock stopped responding while closing; ending it.");
+                    TryKill(watched);
+                    return 0;
+                }
+
                 Log.Warn($"Paddock has not responded for {HangDetector.Threshold.TotalSeconds:0} s; ending it.");
 
                 try
@@ -130,11 +138,12 @@ public static class CrashWatchdog
                 return 0;
             }
 
-            if (!RestartPolicy.IsCrash(exitCode))
+            var onPurpose = heartbeat?.ExitingOnPurpose == true;
+            if (onPurpose || !RestartPolicy.IsCrash(exitCode))
                 return 0;
 
             return Act(
-                RestartPolicy.Decide(exitCode, ran, restarts, IsSessionEnding()),
+                RestartPolicy.Decide(exitCode, ran, restarts, IsSessionEnding(), onPurpose),
                 $"Paddock stopped unexpectedly (exit code 0x{exitCode:X8}) after {Describe(ran)}");
         }
     }
@@ -221,6 +230,19 @@ public static class CrashWatchdog
             $"\n\nWhat happened is in {AppPaths.LogFile}. Start Paddock again whenever you are ready.",
             "Paddock",
             NativeMethods.MB_ICONWARNING | NativeMethods.MB_SETFOREGROUND | NativeMethods.MB_TOPMOST);
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            process.Kill();
+            process.WaitForExit(10000);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Watchdog: could not end Paddock ({ex.Message}).");
+        }
     }
 
     private static bool IsBeingDebugged(Process process)

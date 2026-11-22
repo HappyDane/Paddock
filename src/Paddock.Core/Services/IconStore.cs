@@ -21,7 +21,16 @@ namespace Paddock.Core.Services;
 /// </summary>
 public class IconStore
 {
-    private static readonly string[] IgnoredNames = ["desktop.ini", "thumbs.db"];
+    /// <summary>
+    /// A paddock's own description (title, place, look), kept hidden in its
+    /// folder so that the folder alone is enough to rebuild the paddock if
+    /// settings.json is ever lost. Never an item, and never overwritten by one.
+    /// </summary>
+    public const string MetadataName = ".paddock.json";
+
+    private const string MetadataTempName = ".paddock.json.tmp";
+
+    private static readonly string[] IgnoredNames = ["desktop.ini", "thumbs.db", MetadataName, MetadataTempName];
 
     /// <summary>The note at the top of the store that says what it is and how to get everything back.</summary>
     public const string ReadmeName = "README.txt";
@@ -250,6 +259,61 @@ public class IconStore
         }
     }
 
+    /// <summary>Writes a paddock's description into its folder (atomically, hidden).</summary>
+    public void WriteMetadata(string paddockId, string json)
+    {
+        try
+        {
+            var folder = EnsurePaddockFolder(paddockId);
+            var path = Path.Combine(folder, MetadataName);
+            var temp = Path.Combine(folder, MetadataTempName);
+
+            File.WriteAllText(temp, json);
+            File.Move(temp, path, overwrite: true);
+            File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.Hidden);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not write the description of paddock '{paddockId}': {ex.Message}");
+        }
+    }
+
+    /// <summary>A paddock's description from its folder, or null when there is none.</summary>
+    public string? ReadMetadata(string paddockId)
+    {
+        try
+        {
+            var path = Path.Combine(GetPaddockFolder(paddockId), MetadataName);
+            return File.Exists(path) ? File.ReadAllText(path) : null;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not read the description of paddock '{paddockId}': {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Removes a paddock's description: it is being deleted, and must not
+    /// come back from its folder if the folder cannot be removed.
+    /// </summary>
+    public void DeleteMetadata(string paddockId)
+    {
+        try
+        {
+            var path = Path.Combine(GetPaddockFolder(paddockId), MetadataName);
+            if (File.Exists(path))
+            {
+                File.SetAttributes(path, FileAttributes.Normal);
+                File.Delete(path);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not remove the description of paddock '{paddockId}': {ex.Message}");
+        }
+    }
+
     /// <summary>The names (paddock ids) of the folders in the store.</summary>
     public IReadOnlyList<string> ListPaddockFolders()
     {
@@ -362,6 +426,10 @@ public class IconStore
     /// </summary>
     public void EvacuatePaddock(string paddockId)
     {
+        // First, so that a folder left behind (an item that would not move)
+        // comes back as "Recovered", never as the paddock that was deleted.
+        DeleteMetadata(paddockId);
+
         foreach (var item in ListPaddockItems(paddockId))
         {
             MoveToDesktop(item);
@@ -384,6 +452,11 @@ public class IconStore
     public static bool ItemExists(string path)
         => !string.IsNullOrWhiteSpace(path) && (File.Exists(path) || Directory.Exists(path));
 
+    /// <summary>Names Paddock keeps for itself inside a paddock folder; an item never gets one.</summary>
+    private static bool IsReserved(string fileName)
+        => string.Equals(fileName, MetadataName, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(fileName, MetadataTempName, StringComparison.OrdinalIgnoreCase);
+
     private static bool IsIgnored(string path)
     {
         var name = Path.GetFileName(path);
@@ -405,7 +478,7 @@ public class IconStore
     private static string GetAvailablePath(string folder, string fileName)
     {
         var candidate = Path.Combine(folder, fileName);
-        if (!ItemExists(candidate))
+        if (!ItemExists(candidate) && !IsReserved(fileName))
             return candidate;
 
         var stem = Path.GetFileNameWithoutExtension(fileName);

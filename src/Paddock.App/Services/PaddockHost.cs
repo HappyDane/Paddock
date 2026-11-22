@@ -109,21 +109,29 @@ internal sealed class PaddockHost : IDisposable
 
         LogStartupState();
 
-        if (recovered > 0)
+        if (recovered.Rebuilt > 0)
+        {
+            _app.Notify(
+                "Paddock rebuilt your paddocks",
+                $"Its settings were missing or damaged, so {recovered.Rebuilt} paddock(s) were rebuilt from their folders.");
+        }
+        else if (recovered.Icons > 0)
         {
             _app.Notify(
                 "Paddock found lost icons",
-                $"{recovered} icon(s) had lost their paddock. They are in \"Recovered\" — drag them wherever you like.");
+                $"{recovered.Icons} icon(s) had lost their paddock. They are in \"Recovered\" — drag them wherever you like.");
         }
     }
 
     /// <summary>
     /// Makes sure nothing in the store is out of sight. A paddock folder that
-    /// no paddock owns any more (settings.json was unreadable, say) gets a
-    /// "Recovered" paddock; items loose at the top of the store go back on the
-    /// desktop. Returns how many items were recovered into paddocks.
+    /// no paddock owns any more (settings.json was unreadable, say) gets its
+    /// paddock back: rebuilt from the description kept in the folder, with its
+    /// own title, place and look, or else as "Recovered". Items loose at the
+    /// top of the store go back on the desktop. Returns how many paddocks were
+    /// rebuilt, and how many icons came back into "Recovered" ones.
     /// </summary>
-    private int RecoverLostIcons()
+    private (int Rebuilt, int Icons) RecoverLostIcons()
     {
         var manager = _app.PaddockManager;
         var store = _app.IconStore;
@@ -136,7 +144,10 @@ internal sealed class PaddockHost : IDisposable
 
         var orphans = manager.FindOrphanedFolders();
         if (orphans.Count == 0)
-            return 0;
+        {
+            manager.WriteFolderMetadata();
+            return (0, 0);
+        }
 
         var areas = ScreenHelper.GetWorkAreas();
         var primary = areas.FirstOrDefault(a => a.Contains(1, 1));
@@ -146,24 +157,38 @@ internal sealed class PaddockHost : IDisposable
         var size = new PaddockModel();
         var gap = Math.Max(12, _app.Settings.Settings.IntelligentSpacing);
 
+        var rebuilt = new List<string>();
+        var adopted = new List<string>();
+
         using (manager.DeferSave())
         {
-            for (var i = 0; i < orphans.Count; i++)
+            // Those that describe themselves first, so the rest fit around them.
+            foreach (var id in orphans)
+            {
+                if (manager.RestoreFromFolder(id) is not null)
+                    rebuilt.Add(id);
+            }
+
+            var homeless = orphans.Except(rebuilt).ToList();
+            for (var i = 0; i < homeless.Count; i++)
             {
                 var spot = _app.LayoutEngine.FindFreeSpot(manager.GetPaddocks(), primary, size.Width, size.Height, gap)
                            ?? (primary.Left + gap * (i + 1), primary.Top + gap * (i + 1));
-                var title = orphans.Count == 1 ? "Recovered" : $"Recovered {i + 1}";
+                var title = homeless.Count == 1 ? "Recovered" : $"Recovered {i + 1}";
 
-                manager.AdoptFolder(orphans[i], title, spot.X, spot.Y, size.Width, size.Height);
+                manager.AdoptFolder(homeless[i], title, spot.X, spot.Y, size.Width, size.Height);
+                adopted.Add(homeless[i]);
             }
 
             manager.ReconcilePaddocks();
         }
 
-        var count = orphans.Sum(id => manager.GetPaddock(id)?.Icons.Count ?? 0);
-        Log.Warn($"Found {orphans.Count} paddock folder(s) no paddock owned any more, holding {count} item(s); " +
-                 "they are in \"Recovered\" paddocks now.");
-        return count;
+        manager.WriteFolderMetadata();
+
+        var icons = adopted.Sum(id => manager.GetPaddock(id)?.Icons.Count ?? 0);
+        Log.Warn($"Found {orphans.Count} paddock folder(s) no paddock owned any more: rebuilt {rebuilt.Count} from " +
+                 $"their own description, and put {icons} icon(s) from the rest in \"Recovered\".");
+        return (rebuilt.Count, icons);
     }
 
     /// <summary>

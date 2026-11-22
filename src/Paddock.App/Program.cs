@@ -4,10 +4,11 @@ using Paddock.Shell;
 namespace Paddock.App;
 
 /// <summary>
-/// Paddock's entry point. The two jobs that need no user interface are done
-/// here, before WPF loads: being the crash watchdog (so it stays small, see
-/// <see cref="CrashWatchdog"/>) and <c>--restore-all</c>. Everything else is
-/// the WPF app as usual.
+/// Paddock's entry point, and the one place that decides what this process
+/// is. The jobs that need no user interface are done here, before WPF loads:
+/// the crash watchdog (so it stays small, see <see cref="CrashWatchdog"/>),
+/// the elevated helper that removes items from the all-users desktop, and
+/// <c>--restore-all</c>. Everything else is the WPF app as usual.
 /// </summary>
 public static class Program
 {
@@ -22,6 +23,11 @@ public static class Program
     {
         if (args.Length > 0 && args[0] == CrashWatchdog.Switch)
             return CrashWatchdog.Run(args);
+
+        // Paddock relaunched itself elevated to take shortcuts off the
+        // all-users desktop; this copy does its one job and leaves.
+        if (args.Length == 2 && args[0] == SharedDesktopRemover.HelperSwitch)
+            return SharedDesktopRemover.RunHelper(args[1]);
 
         if (args.Contains(RestoreAllSwitch, StringComparer.OrdinalIgnoreCase))
             return RestoreAll(quiet: args.Contains(QuietSwitch, StringComparer.OrdinalIgnoreCase));

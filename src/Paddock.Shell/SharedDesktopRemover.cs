@@ -24,10 +24,14 @@ public sealed class SharedDesktopRemover : ISharedDesktopRemover
     private static readonly TimeSpan HelperTimeout = TimeSpan.FromMinutes(2);
 
     private readonly string _sharedDesktopRoot;
+    private readonly IWaitAnnouncer? _waits;
 
-    public SharedDesktopRemover(string sharedDesktopRoot)
+    /// <param name="sharedDesktopRoot">The all-users desktop folder.</param>
+    /// <param name="waits">Told when the UI thread waits for the permission prompt, if anyone is listening.</param>
+    public SharedDesktopRemover(string sharedDesktopRoot, IWaitAnnouncer? waits = null)
     {
         _sharedDesktopRoot = sharedDesktopRoot;
+        _waits = waits;
     }
 
     public IReadOnlyCollection<string> Remove(IReadOnlyList<string> paths)
@@ -112,7 +116,7 @@ public sealed class SharedDesktopRemover : ISharedDesktopRemover
         return failures == 0 ? 0 : 1;
     }
 
-    private static void RunElevatedHelper(IReadOnlyList<string> paths)
+    private void RunElevatedHelper(IReadOnlyList<string> paths)
     {
         var exe = Environment.ProcessPath;
         if (string.IsNullOrEmpty(exe))
@@ -122,7 +126,7 @@ public sealed class SharedDesktopRemover : ISharedDesktopRemover
 
         // Starting the helper waits for the user to answer the permission
         // prompt, however long that takes: not a freeze.
-        using var waiting = AppHeartbeat.Current?.WaitingOnPurpose();
+        using var waiting = _waits?.WaitingOnPurpose();
 
         try
         {

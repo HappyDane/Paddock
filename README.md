@@ -74,9 +74,10 @@ that, and keeps it close to home:
 - **If Paddock crashes or freezes, it starts again by itself** — not after you
   exit it or end it in Task Manager. If it keeps failing, it stops trying, puts
   every icon back on the desktop and tells you, rather than leave them hidden.
-- **Nothing is left out of sight.** If Paddock ever finds a zone folder it no
-  longer knows about (say `settings.json` was damaged), its icons come back in a
-  zone called **Recovered**.
+- **Nothing is left out of sight.** Each zone's folder also keeps a small hidden
+  description of the zone (`.paddock.json`: its name, place and look). If
+  `settings.json` is ever lost or damaged, Paddock rebuilds your zones from their
+  folders; a folder with no description comes back as a zone called **Recovered**.
 - **Getting everything back without Paddock**: run `Paddock.exe --restore-all`
   and every icon in `Desktop\.Paddock` goes back on the desktop, whatever state
   Paddock's settings are in. The `README.txt` in that folder says the same.
