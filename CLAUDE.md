@@ -78,13 +78,18 @@ tests/
   Paddock's own store folder).
 - **Auto-organize rules route new desktop items** (`Core/AutoSortRules`, first
   match wins). `Shell/DesktopArrivalWatcher` is one *recursive* watcher on the
-  Desktop, so a move out of `.Paddock` back to the desktop shows up as a rename
-  out of the store: an item the user drags out of a paddock is **never** sent
-  back. Items Paddock itself returns arrive via `IconStore.PlacedOnDesktop`. An
-  item is only judged after 1.5 s of quiet, when it can be opened for DELETE
-  (not still downloading/copying) and no desktop icon is being renamed. Rules
-  only ever *move* items on the user's own desktop
-  (`PaddockManager.MoveDesktopItemsIntoPaddock`), never reference them.
+  Desktop, which covers `.Paddock` too. A move out of a paddock reaches it as
+  "removed from the store, added to the desktop", so what leaves the store is
+  remembered and an item the user drags out is **never** sent back; so are
+  items Paddock returns (`IconStore.PlacedOnDesktop`) and anything dropped
+  during a drag out of a paddock (`ExpectItemsFromPaddock`, copies and new
+  shortcuts included). An item taking the name of one that just left the
+  desktop is an app *saving* (Office renames a temp file over the original),
+  not a new item. Verdicts are kept on the pending item, not re-derived later.
+  An item is only judged after 1.5 s of quiet, when it can be opened for
+  DELETE (not still downloading/copying), is not an empty placeholder, and
+  nobody is renaming an item in a shell view. Rules only ever *move* items on
+  the user's own desktop (`PaddockManager.MoveDesktopItemsIntoPaddock`).
 - **Drops are read in the OLE callback, applied after it.** And after dragging an
   icon *out*, Paddock never moves the file itself: the drop target (Explorer)
   does, and the store watcher notices. Moving it too races Explorer.

@@ -83,10 +83,44 @@ internal static class DesktopListView
     };
 
     /// <summary>
-    /// True while a desktop icon is being renamed (its label is an edit box).
-    /// An item must not be moved away from under the user's typing.
+    /// True while the user is naming an item anywhere in the shell: a desktop
+    /// icon, or an item in an Explorer window or a Save As dialog (where a
+    /// "New folder" can be made right on the desktop). An item must not be
+    /// moved away from under the user's typing.
     /// </summary>
-    internal static bool IsRenamingAnIcon()
+    internal static bool IsRenamingAnItem() => IsRenamingAnIcon() || IsEditingInAShellView();
+
+    /// <summary>
+    /// The focused window is an edit box inside a shell item view — which is
+    /// what a rename looks like. (Only ever causes a short wait if wrong.)
+    /// </summary>
+    private static bool IsEditingInAShellView()
+    {
+        var foreground = NativeMethods.GetForegroundWindow();
+        if (foreground == IntPtr.Zero)
+            return false;
+
+        var info = new NativeMethods.GUITHREADINFO { cbSize = Marshal.SizeOf<NativeMethods.GUITHREADINFO>() };
+        if (!NativeMethods.GetGUIThreadInfo(NativeMethods.GetWindowThreadProcessId(foreground, out _), ref info)
+            || NativeMethods.GetWindowClassName(info.hwndFocus) != "Edit")
+        {
+            return false;
+        }
+
+        var parent = NativeMethods.GetParent(info.hwndFocus);
+        for (var i = 0; parent != IntPtr.Zero && i < 8; i++)
+        {
+            if (NativeMethods.GetWindowClassName(parent) == "SHELLDLL_DefView")
+                return true;
+
+            parent = NativeMethods.GetParent(parent);
+        }
+
+        return false;
+    }
+
+    /// <summary>True while a desktop icon is being renamed (its label is an edit box).</summary>
+    private static bool IsRenamingAnIcon()
     {
         var listView = Find();
         if (listView == IntPtr.Zero)

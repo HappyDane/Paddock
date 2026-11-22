@@ -49,15 +49,29 @@ internal sealed class AutoOrganizeController : IDisposable
         _watcher?.SetSourceFolders(AutoSortRules.SourceFolders(Settings.AutoSortRules));
     }
 
-    /// <summary>Which rule sends each item where. Items no rule wants are left out.</summary>
+    /// <summary>
+    /// An icon is about to be dragged out of a paddock: whatever it drops on
+    /// the desktop stays there. Dispose when the drag is over.
+    /// </summary>
+    internal IDisposable? ExpectItemsFromPaddock() => _watcher?.ExpectItemsFromPaddock();
+
+    /// <summary>
+    /// Which rule sends each item where. Items no rule wants are left out, and
+    /// so are items a paddock already holds (one it references in place).
+    /// </summary>
     internal List<(DesktopItemFacts Item, AutoSortRule Rule)> Plan(IEnumerable<DesktopItemFacts> items)
     {
-        var paddocks = _app.PaddockManager.GetPaddocks().Select(p => p.Id).ToHashSet(StringComparer.Ordinal);
+        var paddocks = _app.PaddockManager.GetPaddocks();
+        var ids = paddocks.Select(p => p.Id).ToHashSet(StringComparer.Ordinal);
+        var held = paddocks.SelectMany(p => p.Icons).Select(i => i.DesktopPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var plan = new List<(DesktopItemFacts, AutoSortRule)>();
 
         foreach (var item in items)
         {
-            if (AutoSortRules.FindMatch(Settings.AutoSortRules, item, paddocks.Contains) is { } rule)
+            if (held.Contains(item.Path))
+                continue;
+
+            if (AutoSortRules.FindMatch(Settings.AutoSortRules, item, ids.Contains) is { } rule)
                 plan.Add((item, rule));
         }
 

@@ -64,7 +64,7 @@ internal sealed class SmokeTest
         Step("Sort By > File Size reorders the icons", SortBySize);
         Step("Sort By > Date Modified reorders the icons", SortByDate);
         Step("Sort By > Ascending reverses the order", ToggleAscending);
-        Step("An auto-organize rule moves a new desktop file in, and leaves it out once dragged out", AutoOrganizeRule);
+        Step("An auto-organize rule moves a new desktop file in, leaves it out once dragged out, and ignores saves", AutoOrganizeRule);
         Step("Appearance… changes colour, icon size and opacity live, and Reset undoes them", ChangeAppearance);
         Step("The eyedropper, frosted glass and icon tint apply live, and Reset undoes them", EyedropperGlassAndTint);
         Step("Clicking a paddock does not lift it above an application", ClickStaysBelowApps);
@@ -109,6 +109,10 @@ internal sealed class SmokeTest
         MakeDesktopFile("Smoke Alpha.txt", 300, new DateTime(2020, 1, 1));
         MakeDesktopFile("Smoke Bravo.txt", 100, new DateTime(2022, 1, 1));
         MakeDesktopFile("Smoke Charlie.txt", 200, new DateTime(2021, 1, 1));
+
+        // Already on the desktop when Paddock starts, and matching its rule:
+        // saving it must not count as a new arrival.
+        MakeDesktopFile("Smoke Routed Saved.txt", 120, new DateTime(2023, 1, 1));
 
         Directory.CreateDirectory(_dataFolder);
         File.WriteAllText(SettingsFile, $$"""
@@ -253,6 +257,8 @@ internal sealed class SmokeTest
         const string name = "Smoke Routed.txt";
         var onDesktop = Path.Combine(_desktop, name);
         var inPaddock = Path.Combine(PaddockFolder, name);
+        var saved = Path.Combine(_desktop, "Smoke Routed Saved.txt");
+        var savedInPaddock = Path.Combine(PaddockFolder, "Smoke Routed Saved.txt");
 
         try
         {
@@ -269,18 +275,32 @@ internal sealed class SmokeTest
 
             Thread.Sleep(5000);
             Check(File.Exists(onDesktop) && !File.Exists(inPaddock), "The rule moved 'Smoke Routed.txt' straight back into the paddock.");
+
+            // Saving a document that was already on the desktop is not an
+            // arrival, though Office saves by renaming a fresh copy over it.
+            var temp = Path.Combine(_desktop, "~WRD0001.tmp");
+            var aside = Path.Combine(_desktop, "~WRL0001.tmp");
+            File.WriteAllText(temp, "saved again");
+            File.Move(saved, aside);
+            File.Move(temp, saved);
+            File.Delete(aside);
+
+            Thread.Sleep(5000);
+            Check(File.Exists(saved) && !File.Exists(savedInPaddock),
+                "Saving a document that was already on the desktop moved it into the paddock.");
         }
         finally
         {
             // Out of the way of the steps that compare what the paddock holds.
-            foreach (var path in new[] { onDesktop, inPaddock })
+            foreach (var path in new[] { onDesktop, inPaddock, saved, savedInPaddock })
             {
                 if (File.Exists(path))
                     File.Delete(path);
             }
 
             Native.RefreshDesktop(_desktop);
-            WaitUntil(() => !PaddockItems().Contains("Smoke Routed"), "'Smoke Routed' to leave the paddock");
+            WaitUntil(() => !PaddockItems().Any(n => n.StartsWith("Smoke Routed", StringComparison.Ordinal)),
+                "the routed test files to leave the paddock");
         }
     }
 

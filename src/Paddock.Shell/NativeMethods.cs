@@ -488,6 +488,32 @@ internal static partial class NativeMethods
     internal static partial Microsoft.Win32.SafeHandles.SafeFileHandle CreateFile(
         string fileName, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
 
+    // -- Is someone renaming an item in a shell view? --
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GUITHREADINFO
+    {
+        internal int cbSize;
+        internal int flags;
+        internal IntPtr hwndActive;
+        internal IntPtr hwndFocus;
+        internal IntPtr hwndCapture;
+        internal IntPtr hwndMenuOwner;
+        internal IntPtr hwndMoveSize;
+        internal IntPtr hwndCaret;
+        internal int caretLeft;
+        internal int caretTop;
+        internal int caretRight;
+        internal int caretBottom;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetGUIThreadInfo(uint threadId, ref GUITHREADINFO info);
+
+    [LibraryImport("user32.dll")]
+    internal static partial IntPtr GetForegroundWindow();
+
     // -- Known folders and shortcuts --
 
     internal static readonly Guid FOLDERID_Downloads = new("374DE290-123F-4565-9164-39C4925E467B");

@@ -40,12 +40,22 @@ internal sealed class PaddockHost : IDisposable
     /// <summary>Quick Hide hid the desktop's own icons, and must show them again.</summary>
     private bool _hidDesktopIcons;
 
+    /// <summary>Keeps trying to show the desktop icons again if Explorer would not the first time.</summary>
+    private readonly DispatcherTimer _iconRetryTimer;
+
     internal PaddockHost(App app)
     {
         _app = app;
 
         _zOrderTimer = new DispatcherTimer { Interval = ZOrderInterval };
         _zOrderTimer.Tick += (_, _) => PinAllToDesktop();
+
+        _iconRetryTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _iconRetryTimer.Tick += (_, _) =>
+        {
+            if (!_paddocksHidden)
+                RestoreDesktopIcons();
+        };
 
         _settleTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
         _settleTimer.Tick += (_, _) =>
@@ -286,12 +296,14 @@ internal sealed class PaddockHost : IDisposable
         if (_app.DesktopIconService.AreDesktopIconsShown() != true)
             return;
 
-        if (!_app.DesktopIconService.SetDesktopIconsShown(false))
-            return;
-
+        // Noted before asking: if Explorer is slow, it may still hide them
+        // after the request has timed out, and then Paddock must know to show
+        // them again. Showing icons that are already showing does nothing.
         _hidDesktopIcons = true;
         settings.DesktopIconsHiddenByPaddock = true;
         _app.Settings.Save();
+
+        _app.DesktopIconService.SetDesktopIconsShown(false);
     }
 
     /// <summary>Shows the desktop's icons again if Paddock hid them (now, or in an earlier run).</summary>
@@ -302,8 +314,16 @@ internal sealed class PaddockHost : IDisposable
             return;
 
         if (!_app.DesktopIconService.SetDesktopIconsShown(true))
-            return; // keep the note, so the next start tries again
+        {
+            // Explorer not ready (just after logon, say) or not answering: keep
+            // the note, and keep trying while Paddock runs.
+            if (!_disposed && !_iconRetryTimer.IsEnabled)
+                _iconRetryTimer.Start();
 
+            return;
+        }
+
+        _iconRetryTimer.Stop();
         _hidDesktopIcons = false;
         settings.DesktopIconsHiddenByPaddock = false;
         _app.Settings.Save();
@@ -392,6 +412,7 @@ internal sealed class PaddockHost : IDisposable
         _settleTimer.Stop();
 
         // Never leave the user's desktop empty behind us.
+        _iconRetryTimer.Stop();
         RestoreDesktopIcons();
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _app.ShellHookService.ForegroundChanged -= OnForegroundChanged;

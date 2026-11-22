@@ -10,19 +10,25 @@ namespace Paddock.Shell;
 /// dragged there, a shortcut an installer made — so the auto-organize rules
 /// can put them in a paddock.
 ///
-/// Three things must never be mistaken for an arrival, and are not:
+/// Most of the work is in what must <em>not</em> count as an arrival:
 /// <list type="bullet">
-/// <item>An item coming back <em>out of a paddock</em> (the user dragged it out,
-/// or Paddock put it back). One recursive watcher covers the desktop and the
-/// paddock store inside it, so such a move shows as a rename out of the store;
-/// <see cref="IgnoreReturned"/> and a short memory of what left the store
-/// cover the rest.</item>
-/// <item>An item that is still being written (a download or copy in progress):
-/// it is only looked at once nothing has happened to it for a moment and it
-/// can actually be moved.</item>
-/// <item>An item being renamed in Explorer (a new folder, say): it waits until
-/// the user has finished typing.</item>
+/// <item>An item coming back out of a paddock — dragged out (moved, copied or
+/// linked) by the user, or put back by Paddock. A move out of the paddock
+/// store reaches the desktop as "removed from the store, added to the
+/// desktop", so what leaves the store is remembered for a moment;
+/// <see cref="IgnoreReturned"/> and <see cref="ExpectItemsFromPaddock"/> cover
+/// Paddock's own moves and drags.</item>
+/// <item>A document being <em>saved</em>. Word, Excel and many others save by
+/// writing a temporary file and renaming it over the original, which looks
+/// like a new file. An item that takes the name of something that was on the
+/// desktop moments ago is a save, not an arrival.</item>
+/// <item>Something unfinished: a download or copy still writing (the file
+/// cannot be opened for moving yet, or a <c>.part</c> sibling exists), an
+/// empty placeholder (the New Shortcut wizard's, say), or an item the user is
+/// naming anywhere in the shell.</item>
 /// </list>
+/// These verdicts are reached when the events happen and kept with the
+/// pending item, so they do not depend on how long the item takes to settle.
 ///
 /// It also remembers what recently left the folders the rules care about
 /// (<see cref="SetSourceFolders"/>, typically Downloads), so a rule can say
@@ -31,15 +37,26 @@ namespace Paddock.Shell;
 public sealed class DesktopArrivalWatcher : IDisposable
 {
     private static readonly TimeSpan QuietPeriod = TimeSpan.FromSeconds(1.5);
+
+    /// <summary>An empty file is usually a placeholder for something still to come.</summary>
+    private static readonly TimeSpan EmptyQuietPeriod = TimeSpan.FromSeconds(30);
+
+    /// <summary>How long a departure, a vacated name or a drag is remembered for matching.</summary>
     private static readonly TimeSpan Memory = TimeSpan.FromSeconds(20);
+
+    /// <summary>After a drag out of a paddock ends, whatever lands on the desktop this soon came from it.</summary>
+    private static readonly TimeSpan DragGrace = TimeSpan.FromSeconds(5);
+
     private static readonly TimeSpan GiveUpAfter = TimeSpan.FromMinutes(15);
     private const int TickMs = 500;
 
     private static readonly string[] IgnoredNames = ["desktop.ini", "thumbs.db"];
 
-    /// <summary>Names browsers and copy tools give a file until it is complete.</summary>
+    /// <summary>Names browsers, copy tools and editors give a file until it is complete.</summary>
     private static readonly string[] TemporaryExtensions =
         [".crdownload", ".part", ".partial", ".download", ".opdownload", ".tmp", ".!ut", ".aria2"];
+
+    private static readonly string[] ShortcutExtensions = [".lnk", ".url"];
 
     private static readonly Regex CopySuffix = new(@"^(?<stem>.*) \(\d+\)(?<ext>\.[^.]*)?$", RegexOptions.CultureInvariant);
 
@@ -48,13 +65,21 @@ public sealed class DesktopArrivalWatcher : IDisposable
     private readonly object _gate = new();
     private readonly Dictionary<string, Pending> _pending = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<Departure> _departures = new();
+
+    /// <summary>Names of established desktop items that just left (deleted, renamed or moved away).</summary>
+    private readonly Dictionary<string, DateTime> _vacated = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Paths Paddock itself just put back on the desktop.</summary>
     private readonly Dictionary<string, DateTime> _returned = new(StringComparer.OrdinalIgnoreCase);
+
     private readonly Dictionary<string, FileSystemWatcher> _sources = new(StringComparer.OrdinalIgnoreCase);
 
     private FileSystemWatcher? _desktop;
     private Timer? _timer;
     private bool _scheduled;
     private bool _disposed;
+    private int _dragsOut;
+    private DateTime _dragOutEnded = DateTime.MinValue;
 
     internal DesktopArrivalWatcher(string desktopRoot, string storeRoot)
     {
@@ -103,7 +128,7 @@ public sealed class DesktopArrivalWatcher : IDisposable
     {
         var wanted = folders
             .Select(f => f.TrimEnd(Path.DirectorySeparatorChar))
-            .Where(f => !IsInsideDesktop(f)) // the desktop watcher already sees those
+            .Where(f => !string.Equals(f, _desktopRoot, StringComparison.OrdinalIgnoreCase))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         lock (_gate)
@@ -127,17 +152,18 @@ public sealed class DesktopArrivalWatcher : IDisposable
 
                 try
                 {
+                    // Non-recursive: a move out of the folder is reported to it as a removal.
                     var watcher = new FileSystemWatcher(folder)
                     {
                         IncludeSubdirectories = false,
                         NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName,
                     };
 
-                    watcher.Deleted += (_, e) => Remember(folder, Path.GetFileName(e.FullPath));
+                    watcher.Deleted += (_, e) => Departed(folder, Path.GetFileName(e.FullPath));
                     watcher.Renamed += (_, e) =>
                     {
                         if (!string.Equals(Path.GetDirectoryName(e.FullPath), folder, StringComparison.OrdinalIgnoreCase))
-                            Remember(folder, Path.GetFileName(e.OldFullPath));
+                            Departed(folder, Path.GetFileName(e.OldFullPath));
                     };
                     watcher.EnableRaisingEvents = true;
                     _sources[folder] = watcher;
@@ -153,11 +179,31 @@ public sealed class DesktopArrivalWatcher : IDisposable
     /// <summary>Paddock itself just put this item back on the desktop: leave it there.</summary>
     public void IgnoreReturned(string desktopPath)
     {
+        var path = Normalize(desktopPath);
+
         lock (_gate)
         {
-            _returned[Normalize(desktopPath)] = DateTime.UtcNow;
-            _pending.Remove(Normalize(desktopPath));
+            _returned[path] = DateTime.UtcNow;
+
+            if (_pending.TryGetValue(path, out var pending))
+                pending.FromPaddock = true;
         }
+    }
+
+    /// <summary>
+    /// An icon is being dragged out of a paddock. Until the returned scope is
+    /// disposed, and briefly after, whatever appears on the desktop came from
+    /// the paddock — moved, copied or as a new shortcut — and stays where the
+    /// user dropped it.
+    /// </summary>
+    public IDisposable ExpectItemsFromPaddock()
+    {
+        lock (_gate)
+        {
+            _dragsOut++;
+        }
+
+        return new DragScope(this);
     }
 
     public void Dispose()
@@ -191,9 +237,9 @@ public sealed class DesktopArrivalWatcher : IDisposable
 
         lock (_gate)
         {
-            if (isTopLevel && created && !IsStore(top) && !IsIgnoredName(top))
+            if (isTopLevel && created && IsCandidate(top))
             {
-                Touch(top);
+                Arrived(top);
                 return;
             }
 
@@ -213,14 +259,22 @@ public sealed class DesktopArrivalWatcher : IDisposable
         {
             if (isTopLevel)
             {
-                _pending.Remove(top);
+                // A brand-new item going again is nothing; an established one
+                // leaving may be an app saving over it.
+                if (!_pending.Remove(top))
+                    _vacated[Path.GetFileName(top)] = DateTime.UtcNow;
+
                 return;
             }
 
             // An item left a paddock; if it reappears on the desktop, it came back from there.
             if (IsStore(top) && IsPaddockItem(path))
-                Remember(null, Path.GetFileName(path));
-            else if (_pending.TryGetValue(top, out var pending))
+            {
+                Departed(null, Path.GetFileName(path));
+                return;
+            }
+
+            if (_pending.TryGetValue(top, out var pending))
                 pending.LastEvent = DateTime.UtcNow;
         }
     }
@@ -229,64 +283,171 @@ public sealed class DesktopArrivalWatcher : IDisposable
     {
         var (oldTop, oldIsTop) = TopLevelItem(oldPath);
         var (newTop, newIsTop) = TopLevelItem(newPath);
+        var lands = newIsTop && newTop is not null && IsCandidate(newTop);
 
         lock (_gate)
         {
-            // Out of a paddock, back onto the desktop: the user (or Paddock) wants it there.
             if (oldTop is not null && IsStore(oldTop))
             {
+                // Straight out of a paddock onto the desktop: the user wants it there.
                 if (newIsTop && newTop is not null)
                 {
                     _returned[newTop] = DateTime.UtcNow;
-                    _pending.Remove(newTop);
+                    if (_pending.TryGetValue(newTop, out var back))
+                        back.FromPaddock = true;
                 }
                 else if (IsPaddockItem(oldPath))
                 {
-                    Remember(null, Path.GetFileName(oldPath));
+                    Departed(null, Path.GetFileName(oldPath));
                 }
 
-                return;
-            }
-
-            // A desktop item went somewhere else (into a paddock, into a folder).
-            if (oldIsTop && oldTop is not null && !(newIsTop && newTop is not null))
-            {
-                _pending.Remove(oldTop);
-
-                if (newTop is not null && _pending.TryGetValue(newTop, out var container))
-                    container.LastEvent = DateTime.UtcNow;
-
-                return;
-            }
-
-            if (!newIsTop || newTop is null || IsStore(newTop) || IsIgnoredName(newTop))
-            {
-                if (newTop is not null && _pending.TryGetValue(newTop, out var settling))
-                    settling.LastEvent = DateTime.UtcNow;
                 return;
             }
 
             if (oldIsTop && oldTop is not null)
             {
-                // Renamed on the desktop. A brand-new item keeps settling under
-                // its new name; a finished download is new now; anything else
-                // was already there, and a rename does not make it new.
-                if (_pending.Remove(oldTop, out var existing))
+                var wasPending = _pending.Remove(oldTop, out var existing);
+                if (!wasPending)
+                    _vacated[Path.GetFileName(oldTop)] = DateTime.UtcNow;
+
+                if (!lands)
                 {
-                    existing.LastEvent = DateTime.UtcNow;
-                    _pending[newTop] = existing;
+                    // It went into a folder, a paddock, or to a temporary name.
+                    if (newTop is not null && _pending.TryGetValue(newTop, out var container))
+                        container.LastEvent = DateTime.UtcNow;
+
+                    return;
+                }
+
+                // A save renames its new copy onto the name the old one had.
+                if (WasVacated(newTop!))
+                {
+                    _pending.Remove(newTop!);
+                    return;
+                }
+
+                if (wasPending)
+                {
+                    // Still brand new: it keeps settling under its new name.
+                    existing!.LastEvent = DateTime.UtcNow;
+                    _pending[newTop!] = existing;
                 }
                 else if (IsTemporaryName(oldTop))
                 {
-                    Touch(newTop);
+                    // A finished download. Renaming an item that was already
+                    // there does not make it new.
+                    Arrived(newTop!);
                 }
 
                 return;
             }
 
-            // Moved up out of a folder that is itself on the desktop.
-            Touch(newTop).CameFrom = oldTop is null ? null : Path.GetDirectoryName(oldPath);
+            if (lands)
+            {
+                // Up out of a folder that is itself on the desktop.
+                if (Arrived(newTop!) is { } pending && oldTop is not null)
+                    pending.CameFrom ??= Path.GetDirectoryName(oldPath);
+            }
+            else if (newTop is not null && _pending.TryGetValue(newTop, out var settling))
+            {
+                settling.LastEvent = DateTime.UtcNow;
+            }
         }
+    }
+
+    // --- Bookkeeping (call with _gate held) ---
+
+    /// <summary>
+    /// Something appeared under this top-level name. Decides at once what it
+    /// is — a save over an existing item, something out of a paddock, or new —
+    /// and returns the pending entry when it is worth waiting for.
+    /// </summary>
+    private Pending? Arrived(string top)
+    {
+        if (WasVacated(top))
+        {
+            _pending.Remove(top);
+            return null;
+        }
+
+        var now = DateTime.UtcNow;
+        var isNew = !_pending.TryGetValue(top, out var pending);
+        if (isNew)
+        {
+            pending = new Pending { FirstSeen = now };
+            _pending[top] = pending;
+        }
+
+        pending!.LastEvent = now;
+
+        var name = Path.GetFileName(top);
+        if (_returned.ContainsKey(top) || DepartedFrom(null, name) || IsDraggingOut(now))
+            pending.FromPaddock = true;
+
+        pending.CameFrom ??= _departures.FirstOrDefault(d => d.Folder is not null && Matches(d.Name, name))?.Folder;
+
+        Schedule();
+        return pending;
+    }
+
+    /// <summary>Something left a paddock (<paramref name="folder"/> null) or a watched folder.</summary>
+    private void Departed(string? folder, string name)
+    {
+        lock (_gate)
+        {
+            _departures.Add(new Departure(folder, name, DateTime.UtcNow));
+
+            // The arrival may have been reported first.
+            foreach (var (path, pending) in _pending)
+            {
+                if (!Matches(name, Path.GetFileName(path)))
+                    continue;
+
+                if (folder is null)
+                    pending.FromPaddock = true;
+                else
+                    pending.CameFrom ??= folder;
+            }
+        }
+    }
+
+    private bool WasVacated(string top)
+        => _vacated.TryGetValue(Path.GetFileName(top), out var when) && DateTime.UtcNow - when <= Memory;
+
+    private bool DepartedFrom(string? folder, string name)
+        => _departures.Any(d => string.Equals(d.Folder, folder, StringComparison.OrdinalIgnoreCase) && Matches(d.Name, name));
+
+    private bool IsDraggingOut(DateTime now) => _dragsOut > 0 || now - _dragOutEnded <= DragGrace;
+
+    private void EndDragOut()
+    {
+        lock (_gate)
+        {
+            if (_dragsOut > 0)
+                _dragsOut--;
+
+            _dragOutEnded = DateTime.UtcNow;
+        }
+    }
+
+    private void Schedule()
+    {
+        if (_scheduled || _disposed)
+            return;
+
+        _scheduled = true;
+        _timer?.Change(TickMs, Timeout.Infinite);
+    }
+
+    private void Forget(DateTime now)
+    {
+        _departures.RemoveAll(d => now - d.Time > Memory);
+
+        foreach (var stale in _returned.Where(r => now - r.Value > Memory).Select(r => r.Key).ToList())
+            _returned.Remove(stale);
+
+        foreach (var stale in _vacated.Where(v => now - v.Value > Memory).Select(v => v.Key).ToList())
+            _vacated.Remove(stale);
     }
 
     // --- Deciding (timer thread) ---
@@ -325,10 +486,7 @@ public sealed class DesktopArrivalWatcher : IDisposable
 
         lock (_gate)
         {
-            _departures.RemoveAll(d => now - d.Time > Memory);
-            foreach (var stale in _returned.Where(r => now - r.Value > Memory).Select(r => r.Key).ToList())
-                _returned.Remove(stale);
-
+            Forget(now);
             due = _pending.Where(p => now - p.Value.LastEvent >= QuietPeriod).Select(p => (p.Key, p.Value)).ToList();
         }
 
@@ -336,27 +494,22 @@ public sealed class DesktopArrivalWatcher : IDisposable
         if (due.Count == 0)
             return ready;
 
-        var renaming = DesktopListView.IsRenamingAnIcon();
+        var naming = DesktopListView.IsRenamingAnItem();
         var finished = new List<(string Path, Pending Item)>();
 
         foreach (var (path, item) in due)
         {
-            var name = Path.GetFileName(path);
-
             if (!File.Exists(path) && !Directory.Exists(path))
             {
                 finished.Add((path, item));
                 continue;
             }
 
-            lock (_gate)
+            if (item.FromPaddock)
             {
-                if (_returned.ContainsKey(path) || DepartedFrom(null, name, item.FirstSeen))
-                {
-                    Log.Info($"Auto-organize: '{name}' came out of a paddock, so it stays on the desktop.");
-                    finished.Add((path, item));
-                    continue;
-                }
+                Log.Info($"Auto-organize: '{Path.GetFileName(path)}' came out of a paddock, so it stays on the desktop.");
+                finished.Add((path, item));
+                continue;
             }
 
             if (IsHiddenOrSystem(path) || now - item.FirstSeen > GiveUpAfter)
@@ -365,12 +518,12 @@ public sealed class DesktopArrivalWatcher : IDisposable
                 continue;
             }
 
-            // Still being typed, written or copied: look again shortly.
-            if (renaming || IsBusy(path))
+            // Still being named, written, copied or filled in: look again shortly.
+            if (naming || IsBusy(path) || IsPlaceholder(path, now - item.LastEvent))
                 continue;
 
             finished.Add((path, item));
-            ready.Add((path, item.CameFrom ?? CameFrom(name, path, item.FirstSeen)));
+            ready.Add((path, item.CameFrom ?? CopiedFrom(path)));
         }
 
         lock (_gate)
@@ -386,19 +539,17 @@ public sealed class DesktopArrivalWatcher : IDisposable
         return ready;
     }
 
-    /// <summary>The watched folder an item was moved out of, or still sits in as the original of a copy.</summary>
-    private string? CameFrom(string name, string path, DateTime firstSeen)
+    /// <summary>A watched folder that still holds the original this item is a copy of.</summary>
+    private string? CopiedFrom(string path)
     {
         List<string> folders;
 
         lock (_gate)
         {
-            var moved = _departures.FirstOrDefault(d => d.Folder is not null && Matches(d.Name, name) && Near(d.Time, firstSeen));
-            if (moved is not null)
-                return moved.Folder;
-
             folders = _sources.Keys.ToList();
         }
+
+        var name = Path.GetFileName(path);
 
         foreach (var folder in folders)
         {
@@ -406,8 +557,9 @@ public sealed class DesktopArrivalWatcher : IDisposable
 
             try
             {
-                if (Directory.Exists(path) ? Directory.Exists(original)
-                    : File.Exists(original) && new FileInfo(original).Length == new FileInfo(path).Length)
+                if (Directory.Exists(path)
+                        ? Directory.Exists(original)
+                        : File.Exists(original) && new FileInfo(original).Length == new FileInfo(path).Length)
                 {
                     return folder;
                 }
@@ -421,43 +573,7 @@ public sealed class DesktopArrivalWatcher : IDisposable
         return null;
     }
 
-    // --- Helpers (call with _gate held where they touch state) ---
-
-    private Pending Touch(string path)
-    {
-        var now = DateTime.UtcNow;
-        if (!_pending.TryGetValue(path, out var pending))
-        {
-            pending = new Pending { FirstSeen = now };
-            _pending[path] = pending;
-        }
-
-        pending.LastEvent = now;
-        Schedule();
-        return pending;
-    }
-
-    private void Schedule()
-    {
-        if (_scheduled || _disposed)
-            return;
-
-        _scheduled = true;
-        _timer?.Change(TickMs, Timeout.Infinite);
-    }
-
-    private void Remember(string? folder, string name)
-    {
-        lock (_gate)
-        {
-            _departures.Add(new Departure(folder, name, DateTime.UtcNow));
-        }
-    }
-
-    private bool DepartedFrom(string? folder, string name, DateTime around)
-        => _departures.Any(d => string.Equals(d.Folder, folder, StringComparison.OrdinalIgnoreCase)
-                                && Matches(d.Name, name)
-                                && Near(d.Time, around));
+    // --- Helpers ---
 
     /// <summary>Same name — or the same name with Explorer's " (2)" added to avoid a clash.</summary>
     private static bool Matches(string departed, string arrived)
@@ -469,8 +585,6 @@ public sealed class DesktopArrivalWatcher : IDisposable
         return match.Success
                && string.Equals(match.Groups["stem"].Value + match.Groups["ext"].Value, departed, StringComparison.OrdinalIgnoreCase);
     }
-
-    private static bool Near(DateTime a, DateTime b) => (a > b ? a - b : b - a) <= Memory;
 
     /// <summary>
     /// The top-level desktop item an event is about (as a full path) and
@@ -497,17 +611,14 @@ public sealed class DesktopArrivalWatcher : IDisposable
         return (Path.Combine(_desktopRoot, first), separator < 0);
     }
 
+    /// <summary>A top-level name that could be a real new item (not the store, not a temporary file).</summary>
+    private bool IsCandidate(string top) => !IsStore(top) && !IsIgnoredName(top);
+
     private bool IsStore(string top) => string.Equals(Path.GetFileName(top), _storeName, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>An item directly inside a paddock's folder: Desktop\.Paddock\&lt;id&gt;\&lt;item&gt;.</summary>
     private bool IsPaddockItem(string path)
         => Path.GetRelativePath(_desktopRoot, path).Split(Path.DirectorySeparatorChar).Length == 3;
-
-    private bool IsInsideDesktop(string folder)
-    {
-        var relative = Path.GetRelativePath(_desktopRoot, folder);
-        return relative == "." || (!relative.StartsWith("..", StringComparison.Ordinal) && !Path.IsPathRooted(relative));
-    }
 
     private static bool IsIgnoredName(string path)
     {
@@ -528,6 +639,27 @@ public sealed class DesktopArrivalWatcher : IDisposable
             return attributes.HasFlag(FileAttributes.Hidden) || attributes.HasFlag(FileAttributes.System);
         }
         catch (Exception)
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// An empty file is usually a placeholder: a download's (Firefox), a new
+    /// document still being named, the New Shortcut wizard's. An empty
+    /// shortcut is never a finished one; anything else empty gets a longer wait.
+    /// </summary>
+    private static bool IsPlaceholder(string path, TimeSpan quietFor)
+    {
+        try
+        {
+            var file = new FileInfo(path);
+            if (!file.Exists || file.Length > 0)
+                return false;
+
+            return ShortcutExtensions.Contains(file.Extension, StringComparer.OrdinalIgnoreCase) || quietFor < EmptyQuietPeriod;
+        }
+        catch (IOException)
         {
             return true;
         }
@@ -560,7 +692,7 @@ public sealed class DesktopArrivalWatcher : IDisposable
         return handle.IsInvalid && Marshal.GetLastWin32Error() == NativeMethods.ERROR_SHARING_VIOLATION;
     }
 
-    private string Normalize(string path) => Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+    private static string Normalize(string path) => Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
 
     private sealed class Pending
     {
@@ -569,8 +701,25 @@ public sealed class DesktopArrivalWatcher : IDisposable
         public DateTime LastEvent { get; set; }
 
         public string? CameFrom { get; set; }
+
+        /// <summary>It came out of a paddock (or was dropped from one): never routed.</summary>
+        public bool FromPaddock { get; set; }
     }
 
     /// <param name="Folder">The watched folder it left, or null for a paddock.</param>
     private sealed record Departure(string? Folder, string Name, DateTime Time);
+
+    private sealed class DragScope(DesktopArrivalWatcher owner) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+            owner.EndDragOut();
+        }
+    }
 }

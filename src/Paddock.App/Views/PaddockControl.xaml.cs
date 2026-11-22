@@ -399,7 +399,12 @@ public partial class PaddockControl : UserControl
             ? DragDropEffects.Move | DragDropEffects.Copy | DragDropEffects.Link
             : DragDropEffects.Copy | DragDropEffects.Link;
 
-        var result = DragDrop.DoDragDrop(element, data, allowed);
+        DragDropEffects result;
+
+        // Whatever this drops on the desktop — moved, copied or a new shortcut
+        // — is where the user wants it: no auto-organize rule may send it back.
+        using (CurrentApp.AutoOrganize?.ExpectItemsFromPaddock())
+            result = DragDrop.DoDragDrop(element, data, allowed);
 
         _iconDragStarted = false;
         HandleIconDragFinished(result);

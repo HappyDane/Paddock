@@ -40,9 +40,10 @@ internal sealed class ScreenSnapshot
 
             using (var graphics = Drawing.Graphics.FromImage(bitmap))
             {
-                // CaptureBlt includes layered windows — paddocks among them.
-                graphics.CopyFromScreen(bounds.Left, bounds.Top, 0, 0, bounds.Size,
-                    Drawing.CopyPixelOperation.SourceCopy | Drawing.CopyPixelOperation.CaptureBlt);
+                // With desktop composition this is the screen as composed,
+                // layered windows (paddocks among them) included. (System.Drawing
+                // rejects SourceCopy | CaptureBlt as an undefined value.)
+                graphics.CopyFromScreen(bounds.Left, bounds.Top, 0, 0, bounds.Size, Drawing.CopyPixelOperation.SourceCopy);
             }
 
             var data = bitmap.LockBits(
