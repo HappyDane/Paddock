@@ -37,6 +37,9 @@ internal sealed class PaddockHost : IDisposable
     private bool _paddocksHidden;
     private bool _disposed;
 
+    /// <summary>Quick Hide hid the desktop's own icons, and must show them again.</summary>
+    private bool _hidDesktopIcons;
+
     internal PaddockHost(App app)
     {
         _app = app;
@@ -57,6 +60,13 @@ internal sealed class PaddockHost : IDisposable
     /// <summary>Restores the saved layout and starts watching the environment.</summary>
     internal void Start()
     {
+        // A previous run hid the desktop's icons and never got to show them again.
+        if (_app.Settings.Settings.DesktopIconsHiddenByPaddock)
+        {
+            Log.Info("The desktop icons were left hidden by an earlier run; showing them again.");
+            RestoreDesktopIcons();
+        }
+
         _app.PaddockManager.ReconcilePaddocks();
         ClampAllToMonitors();
 
@@ -108,10 +118,14 @@ internal sealed class PaddockHost : IDisposable
     /// <paramref name="beginRename"/> its title then opens for editing, so a
     /// freshly drawn paddock can be named without a trip to the context menu.
     /// </summary>
-    internal void CreatePaddock(Rect screenArea, bool beginRename = false, bool collectIconsUnderneath = false)
+    internal PaddockModel CreatePaddock(
+        Rect screenArea,
+        bool beginRename = false,
+        bool collectIconsUnderneath = false,
+        string title = "New Paddock")
     {
         var model = _app.PaddockManager.CreatePaddock(
-            title: "New Paddock",
+            title: title,
             x: screenArea.X,
             y: screenArea.Y,
             width: screenArea.Width,
@@ -134,6 +148,48 @@ internal sealed class PaddockHost : IDisposable
             CollectIconsUnderneath(window, beginRename);
         else if (beginRename)
             window.ViewModel.BeginRenameTitle();
+
+        return model;
+    }
+
+    /// <summary>
+    /// Creates a paddock with this title in a free spot on the primary
+    /// monitor — for rules that name a paddock the user does not have yet.
+    /// </summary>
+    internal PaddockModel CreateNamedPaddock(string title)
+    {
+        var areas = ScreenHelper.GetWorkAreas();
+        var primary = areas.FirstOrDefault(a => a.Contains(1, 1));
+        if (primary == default)
+            primary = areas[0];
+
+        var defaults = new PaddockModel();
+        var gap = Math.Max(12, _app.Settings.Settings.IntelligentSpacing);
+        var spot = _app.LayoutEngine.FindFreeSpot(_app.PaddockManager.GetPaddocks(), primary, defaults.Width, defaults.Height, gap)
+                   ?? (primary.Left + (primary.Width - defaults.Width) / 2, primary.Top + (primary.Height - defaults.Height) / 2);
+
+        return CreatePaddock(new Rect(spot.X, spot.Y, defaults.Width, defaults.Height), title: title);
+    }
+
+    /// <summary>
+    /// Moves items off the desktop into a paddock for an auto-organize rule,
+    /// and briefly outlines the paddock so the user sees where they went.
+    /// Returns how many moved.
+    /// </summary>
+    internal int MoveIntoPaddock(string paddockId, IReadOnlyCollection<string> desktopPaths)
+    {
+        var added = _app.PaddockManager.MoveDesktopItemsIntoPaddock(paddockId, desktopPaths);
+        if (added.Count == 0)
+            return 0;
+
+        if (FindWindow(paddockId) is { } window)
+        {
+            window.ViewModel.RefreshIcons();
+            window.ViewModel.HighlightArrival();
+        }
+
+        _app.DesktopIconService.NotifyShellOfDesktopChange();
+        return added.Count;
     }
 
     /// <summary>
@@ -190,6 +246,7 @@ internal sealed class PaddockHost : IDisposable
     internal void SetPaddocksVisible(bool visible)
     {
         _paddocksHidden = !visible;
+        Log.Info(visible ? "Quick Hide: showing paddocks." : "Quick Hide: hiding paddocks.");
 
         foreach (var window in _windows)
         {
@@ -207,7 +264,49 @@ internal sealed class PaddockHost : IDisposable
             }
         }
 
+        if (visible)
+            RestoreDesktopIcons();
+        else
+            HideDesktopIcons();
+
         UpdateZOrderTimer();
+    }
+
+    /// <summary>
+    /// Quick Hide takes the desktop's own icons with it, as Fences does —
+    /// unless that is turned off, or the user already hid them themselves (in
+    /// which case they are theirs to show again, not ours).
+    /// </summary>
+    private void HideDesktopIcons()
+    {
+        var settings = _app.Settings.Settings;
+        if (!settings.QuickHideDesktopIcons || _hidDesktopIcons)
+            return;
+
+        if (_app.DesktopIconService.AreDesktopIconsShown() != true)
+            return;
+
+        if (!_app.DesktopIconService.SetDesktopIconsShown(false))
+            return;
+
+        _hidDesktopIcons = true;
+        settings.DesktopIconsHiddenByPaddock = true;
+        _app.Settings.Save();
+    }
+
+    /// <summary>Shows the desktop's icons again if Paddock hid them (now, or in an earlier run).</summary>
+    internal void RestoreDesktopIcons()
+    {
+        var settings = _app.Settings.Settings;
+        if (!_hidDesktopIcons && !settings.DesktopIconsHiddenByPaddock)
+            return;
+
+        if (!_app.DesktopIconService.SetDesktopIconsShown(true))
+            return; // keep the note, so the next start tries again
+
+        _hidDesktopIcons = false;
+        settings.DesktopIconsHiddenByPaddock = false;
+        _app.Settings.Save();
     }
 
     /// <summary>
@@ -291,6 +390,9 @@ internal sealed class PaddockHost : IDisposable
         _disposed = true;
         _zOrderTimer.Stop();
         _settleTimer.Stop();
+
+        // Never leave the user's desktop empty behind us.
+        RestoreDesktopIcons();
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _app.ShellHookService.ForegroundChanged -= OnForegroundChanged;
 

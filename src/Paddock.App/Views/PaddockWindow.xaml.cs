@@ -22,6 +22,9 @@ public partial class PaddockWindow : Window
     private readonly ShellHookService _shellHook;
     private HwndSource? _source;
 
+    /// <summary>Whether the compositor's blur is currently switched on for this window.</summary>
+    private bool _blurOn;
+
     public PaddockWindow(PaddockViewModel viewModel, ShellHookService shellHook)
     {
         InitializeComponent();
@@ -33,6 +36,7 @@ public partial class PaddockWindow : Window
         ApplyModelBounds();
 
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        SizeChanged += (_, _) => UpdateGlassRegion();
     }
 
     public PaddockViewModel ViewModel => _viewModel;
@@ -72,6 +76,48 @@ public partial class PaddockWindow : Window
         // and an owned window is liable to be dragged back up the z-order with
         // its owner, which is exactly what we are trying to prevent.
         _shellHook.SendToDesktopLevel(handle);
+
+        ApplyFrostedGlass();
+    }
+
+    /// <summary>
+    /// Frosted glass is the compositor's blur behind this window. The blur
+    /// fills the whole window rectangle, so the window is also clipped to the
+    /// paddock's rounded shape — otherwise blurred square corners would show
+    /// outside the rounded panel.
+    /// </summary>
+    private void ApplyFrostedGlass()
+    {
+        var handle = _source?.Handle ?? IntPtr.Zero;
+        if (handle == IntPtr.Zero)
+            return;
+
+        var wanted = _viewModel.FrostedGlass;
+
+        if (wanted != _blurOn)
+        {
+            var applied = WindowStyles.SetBlurBehind(handle, wanted);
+            _blurOn = wanted && applied;
+
+            if (!wanted)
+                WindowStyles.SetRoundedRegion(handle, 0, 0, 0);
+        }
+
+        UpdateGlassRegion();
+    }
+
+    private void UpdateGlassRegion()
+    {
+        if (!_blurOn || _source?.CompositionTarget is not { } target)
+            return;
+
+        // The region is in physical pixels; the window is laid out in DIPs.
+        var toDevice = target.TransformToDevice;
+        WindowStyles.SetRoundedRegion(
+            _source.Handle,
+            (int)Math.Round(ActualWidth * toDevice.M11),
+            (int)Math.Round(ActualHeight * toDevice.M22),
+            (int)Math.Round(_viewModel.PaddockCornerRadius * toDevice.M11));
     }
 
     protected override void OnClosed(EventArgs e)
@@ -104,6 +150,14 @@ public partial class PaddockWindow : Window
 
             case nameof(PaddockViewModel.DisplayHeight):
                 Height = _viewModel.DisplayHeight;
+                break;
+
+            case nameof(PaddockViewModel.FrostedGlass):
+                ApplyFrostedGlass();
+                break;
+
+            case nameof(PaddockViewModel.CornerRadius):
+                UpdateGlassRegion();
                 break;
         }
     }

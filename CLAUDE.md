@@ -32,8 +32,10 @@ tests/
 ## How the desktop integration works (read before touching it)
 - **One window per paddock.** There is deliberately no full-screen overlay: empty
   desktop space belongs to the shell, so right-click, rubber-band selection and
-  icon dragging keep working. The only full-screen window is `DrawAreaWindow`,
-  shown for the moment the user draws a new paddock.
+  icon dragging keep working. The only full-screen windows are transient:
+  `DrawAreaWindow` (drawing a new paddock from the tray) and `EyedropperWindow`
+  (picking a colour — it shows a snapshot taken just before it opened, so it is
+  never in its own picture).
 - **Z-order, not parenting.** Do *not* `SetParent` into `WorkerW` — a window there
   renders behind the desktop icons and gets no mouse input. `ShellHookService`
   instead keeps each window *directly above* the window hosting `SHELLDLL_DefView`,
@@ -60,12 +62,29 @@ tests/
   icon), and replays a plain right-click so Explorer's desktop menu still opens.
   The state machine is `Core/DesktopDrawGesture` (unit-tested). Left-drag stays
   the desktop's rubber-band selection. Keep the hook callback fast.
+- **Double-click on empty desktop hides paddocks** — and, by default, the
+  desktop's own icons (Explorer's View → Show desktop icons, `WM_COMMAND 0x7402`
+  to `SHELLDLL_DefView`). The same hook *watches* left presses (never swallows
+  them): `Core/DesktopDoubleClick` applies Windows' double-click rule using only
+  a window-class check in the callback; the cross-process "was it on an icon?"
+  `LVM_HITTEST` runs afterwards on the hook thread's own message loop. While the
+  icons are hidden, `settings.json` says so (`desktopIconsHiddenByPaddock`), and
+  the next start shows them again — a crash must never leave a desktop empty.
 - **A new paddock collects the icons it was drawn over.** Positions and real
   file paths come from Explorer's own folder view (`DesktopFolderView`:
   IShellWindows → desktop IShellBrowser → IFolderView), never from icon labels,
   which hide extensions. Cross-process COM: call it off the UI thread. Which
   icons count is `Core/DesktopLayout.ItemsUnder` (centre inside; never
   Paddock's own store folder).
+- **Auto-organize rules route new desktop items** (`Core/AutoSortRules`, first
+  match wins). `Shell/DesktopArrivalWatcher` is one *recursive* watcher on the
+  Desktop, so a move out of `.Paddock` back to the desktop shows up as a rename
+  out of the store: an item the user drags out of a paddock is **never** sent
+  back. Items Paddock itself returns arrive via `IconStore.PlacedOnDesktop`. An
+  item is only judged after 1.5 s of quiet, when it can be opened for DELETE
+  (not still downloading/copying) and no desktop icon is being renamed. Rules
+  only ever *move* items on the user's own desktop
+  (`PaddockManager.MoveDesktopItemsIntoPaddock`), never reference them.
 - **Drops are read in the OLE callback, applied after it.** And after dragging an
   icon *out*, Paddock never moves the file itself: the drop target (Explorer)
   does, and the store watcher notices. Moving it too races Explorer.
@@ -139,9 +158,14 @@ Requires the Windows Application Packaging Project tooling. It is deliberately
 3. Register the service in `App.xaml.cs`
 
 ### Changing how paddocks look
-Per-paddock look lives in `PaddockStyle` (colour, opacity, `IconSize`, `Font`)
-and is edited in `Views/AppearancePanel` (a popover opened from the paddock's
-menu). Text colour is derived, never stored: `ColorContrast.PrefersDarkText`
+Per-paddock look lives in `PaddockStyle` (colour, opacity, `FrostedGlass`,
+`IconTint`/`IconTintStrength`, `IconSize`, `Font`) and is edited in
+`Views/AppearancePanel` (a popover opened from the paddock's menu). Frosted
+glass is the compositor's blur behind the window (`WindowStyles.SetBlurBehind`)
+plus a rounded window region so the blur follows the corners — `PaddockWindow`
+re-applies the region on every resize. Icon tint is the W3C "color" blend
+(`Core/IconTint`, unit-tested) applied to a copy of each icon bitmap
+(`Helpers/TintedIcons`, cached per bitmap). Text colour is derived, never stored: `ColorContrast.PrefersDarkText`
 picks light or dark labels for the paddock's colour and opacity. App-wide menu
 and tooltip styling is `Resources/Controls.xaml`, coloured by the active theme
 dictionary — keep both themes' keys in step. There is deliberately no close

@@ -45,6 +45,13 @@ public class IconStore
     /// <summary>Parent folder holding one subfolder per paddock.</summary>
     public string StoreRoot { get; }
 
+    /// <summary>
+    /// Raised with the new path whenever the store puts an item back on the
+    /// desktop — so the auto-organize rules can tell an item Paddock returned
+    /// from one that just arrived, and leave it where it is.
+    /// </summary>
+    public event Action<string>? PlacedOnDesktop;
+
     public string GetPaddockFolder(string paddockId)
         => Path.Combine(StoreRoot, paddockId);
 
@@ -196,6 +203,7 @@ public class IconStore
             Directory.CreateDirectory(DesktopRoot);
             var target = GetAvailablePath(DesktopRoot, Path.GetFileName(source));
             MoveItem(source, target);
+            PlacedOnDesktop?.Invoke(target);
             return target;
         }
         catch (Exception ex)

@@ -4,6 +4,8 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using Paddock.App.Helpers;
 using Paddock.Core.Models;
 using Paddock.Core.Services;
 using Paddock.Shell;
@@ -13,16 +15,19 @@ namespace Paddock.App.ViewModels;
 public class IconViewModel : INotifyPropertyChanged
 {
     private readonly IconEntry _entry;
+    private BitmapSource? _rawImage;
     private ImageSource? _iconImage;
+    private IconTintSpec? _tint;
 
-    public IconViewModel(IconEntry entry)
-        : this(entry, ((App)Application.Current).IconExtractor)
+    public IconViewModel(IconEntry entry, IconTintSpec? tint = null)
+        : this(entry, ((App)Application.Current).IconExtractor, tint)
     {
     }
 
-    public IconViewModel(IconEntry entry, IconExtractor iconExtractor)
+    public IconViewModel(IconEntry entry, IconExtractor iconExtractor, IconTintSpec? tint = null)
     {
         _entry = entry;
+        _tint = tint;
 
         // Computed once: bindings re-evaluate these, and working out whether the
         // item is a folder costs a filesystem call each time.
@@ -50,10 +55,25 @@ public class IconViewModel : INotifyPropertyChanged
     public bool IsManaged => _entry.Managed;
 
     /// <summary>
-    /// The item's icon. Filled in asynchronously — a paddock draws immediately
-    /// and its icons appear as the shell hands them over.
+    /// The item's icon, tinted when the paddock asks for it. Filled in
+    /// asynchronously — a paddock draws immediately and its icons appear as
+    /// the shell hands them over.
     /// </summary>
     public ImageSource? IconImage => _iconImage;
+
+    /// <summary>Recolours the icon toward the paddock's tint, or back to its own colours.</summary>
+    public void SetTint(IconTintSpec? tint)
+    {
+        if (_tint == tint)
+            return;
+
+        _tint = tint;
+        UpdateImage();
+        OnPropertyChanged(nameof(IconImage));
+    }
+
+    private void UpdateImage()
+        => _iconImage = _rawImage is null || _tint is null ? _rawImage : TintedIcons.Get(_rawImage, _tint.Value);
 
     public void Launch()
     {
@@ -77,7 +97,8 @@ public class IconViewModel : INotifyPropertyChanged
         // Already known: use it straight away so nothing flickers on a refresh.
         if (iconExtractor.TryGetCached(_entry.DesktopPath, out var cached))
         {
-            _iconImage = cached;
+            _rawImage = cached;
+            UpdateImage();
             return;
         }
 
@@ -92,13 +113,15 @@ public class IconViewModel : INotifyPropertyChanged
             // set the field directly rather than throwing on a worker thread.
             if (dispatcher is null || dispatcher.HasShutdownStarted)
             {
-                _iconImage = icon;
+                _rawImage = icon;
+                UpdateImage();
                 return;
             }
 
             dispatcher.InvokeAsync(() =>
             {
-                _iconImage = icon;
+                _rawImage = icon;
+                UpdateImage();
                 OnPropertyChanged(nameof(IconImage));
             });
         });

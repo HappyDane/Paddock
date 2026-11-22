@@ -24,6 +24,25 @@ public class PaddockStyle
 
     /// <summary>Typeface for the title and icon labels.</summary>
     public PaddockFont Font { get; set; } = PaddockFont.System;
+
+    /// <summary>
+    /// Frosted glass: the wallpaper behind the paddock shows through blurred,
+    /// under <see cref="BackgroundColor"/> at <see cref="Opacity"/> (which then
+    /// works as the strength of the tint over the glass).
+    /// </summary>
+    public bool FrostedGlass { get; set; }
+
+    /// <summary>
+    /// Colour every icon in the paddock takes on, as <c>#RRGGBB</c>, or
+    /// <c>null</c> to draw icons as they are. Each icon keeps its own light and
+    /// shade; only the hue changes (see <see cref="Services.IconTint"/>).
+    /// </summary>
+    public string? IconTint { get; set; }
+
+    /// <summary>How far icons move toward <see cref="IconTint"/>: 0 not at all, 1 completely.</summary>
+    public double IconTintStrength { get; set; } = DefaultIconTintStrength;
+
+    public const double DefaultIconTintStrength = 0.8;
 }
 
 public enum IconSize

@@ -51,9 +51,33 @@ public class SettingsViewModel : INotifyPropertyChanged
         {
             _settings.Settings.DrawOnDesktop = value;
             _settings.Save();
-            ((App)Application.Current).SetDesktopDrawing(value);
+            ((App)Application.Current).ConfigureDesktopGestures();
             OnPropertyChanged();
         }
+    }
+
+    public bool DoubleClickToHide
+    {
+        get => _settings.Settings.DoubleClickToHide;
+        set
+        {
+            _settings.Settings.DoubleClickToHide = value;
+            _settings.Save();
+            ((App)Application.Current).ConfigureDesktopGestures();
+            OnPropertyChanged();
+        }
+    }
+
+    public bool QuickHideDesktopIcons
+    {
+        get => _settings.Settings.QuickHideDesktopIcons;
+        set { _settings.Settings.QuickHideDesktopIcons = value; _settings.Save(); OnPropertyChanged(); }
+    }
+
+    public bool DefaultFrostedGlass
+    {
+        get => _settings.Settings.DefaultFrostedGlass;
+        set { _settings.Settings.DefaultFrostedGlass = value; _settings.Save(); OnPropertyChanged(); }
     }
 
     public bool SnapEnabled

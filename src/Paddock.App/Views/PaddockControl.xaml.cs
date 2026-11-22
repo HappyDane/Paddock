@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Paddock.App.Helpers;
 using Paddock.App.ViewModels;
@@ -32,6 +33,11 @@ public partial class PaddockControl : UserControl
     private Point _iconDragStart;
     private bool _iconDragStarted;
 
+    /// <summary>A drag is over the paddock, so the outline must stay up whatever a pulse does.</summary>
+    private bool _dragOver;
+
+    private Action? _arrivalHandler;
+
     public PaddockControl()
     {
         InitializeComponent();
@@ -49,8 +55,14 @@ public partial class PaddockControl : UserControl
         if (e.OldValue is PaddockViewModel oldVm && _vmPropertyChangedHandler is not null)
             oldVm.PropertyChanged -= _vmPropertyChangedHandler;
 
+        if (e.OldValue is PaddockViewModel previous && _arrivalHandler is not null)
+            previous.ArrivalHighlightRequested -= _arrivalHandler;
+
         if (e.NewValue is PaddockViewModel vm)
         {
+            _arrivalHandler = () => Dispatcher.BeginInvoke(PulseArrival);
+            vm.ArrivalHighlightRequested += _arrivalHandler;
+
             UpdateTitleVisibility(vm.TitleVisibility);
             _vmPropertyChangedHandler = (_, args) =>
             {
@@ -252,12 +264,46 @@ public partial class PaddockControl : UserControl
 
     private void Paddock_DragEnter(object sender, DragEventArgs e)
     {
-        if (CanAccept(e))
-            DropHighlight.Visibility = Visibility.Visible;
+        if (!CanAccept(e))
+            return;
+
+        _dragOver = true;
+        DropHighlight.BeginAnimation(OpacityProperty, null);
+        DropHighlight.Visibility = Visibility.Visible;
     }
 
     private void Paddock_DragLeave(object sender, DragEventArgs e)
-        => DropHighlight.Visibility = Visibility.Collapsed;
+    {
+        _dragOver = false;
+        DropHighlight.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Items arrived by themselves (an auto-organize rule): outline the
+    /// paddock for a moment and let it fade, so the user sees where they went.
+    /// </summary>
+    private void PulseArrival()
+    {
+        if (_dragOver)
+            return;
+
+        var fade = new DoubleAnimation(1, 0, new Duration(TimeSpan.FromMilliseconds(1200)))
+        {
+            BeginTime = TimeSpan.FromMilliseconds(500),
+        };
+
+        fade.Completed += (_, _) =>
+        {
+            if (_dragOver)
+                return;
+
+            DropHighlight.BeginAnimation(OpacityProperty, null);
+            DropHighlight.Visibility = Visibility.Collapsed;
+        };
+
+        DropHighlight.Visibility = Visibility.Visible;
+        DropHighlight.BeginAnimation(OpacityProperty, fade);
+    }
 
     private static bool CanAccept(DragEventArgs e)
         => e.Data.GetDataPresent(typeof(IconDragData))
@@ -265,6 +311,7 @@ public partial class PaddockControl : UserControl
 
     private void Paddock_Drop(object sender, DragEventArgs e)
     {
+        _dragOver = false;
         DropHighlight.Visibility = Visibility.Collapsed;
 
         // Read the drop now, act on it once the drag has finished. The drag
@@ -408,6 +455,9 @@ public partial class PaddockControl : UserControl
     /// </summary>
     private void ContextMenu_Appearance(object sender, RoutedEventArgs e)
         => Dispatcher.BeginInvoke(DispatcherPriority.Input, () => AppearancePopup.IsOpen = true);
+
+    private void ContextMenu_AutoOrganize(object sender, RoutedEventArgs e)
+        => Dispatcher.BeginInvoke(DispatcherPriority.Input, () => AutoOrganizeWindow.ShowFor(ViewModel.Id));
 
     private void ContextMenu_Remove(object sender, RoutedEventArgs e)
     {

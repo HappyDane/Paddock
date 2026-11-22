@@ -28,8 +28,14 @@ public partial class App : Application
     /// <summary>Owns the live paddock windows.</summary>
     internal PaddockHost? Host { get; private set; }
 
+    /// <summary>The desktop mouse hook: right-drag to draw, double-click to hide.</summary>
+    private DesktopGestureService? _gestures;
+
     /// <summary>Right-drag on the desktop to draw a paddock.</summary>
     private DesktopDrawController? _drawController;
+
+    /// <summary>Routes new desktop items into paddocks by the user's rules.</summary>
+    internal AutoOrganizeController? AutoOrganize { get; private set; }
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -78,8 +84,13 @@ public partial class App : Application
         Host = new PaddockHost(this);
         Host.Start();
 
-        _drawController = new DesktopDrawController(this);
-        _drawController.SetEnabled(Settings.Settings.DrawOnDesktop);
+        _gestures = new DesktopGestureService();
+        _gestures.DesktopDoubleClicked += () => Dispatcher.BeginInvoke(() => TogglePaddocks());
+        _drawController = new DesktopDrawController(this, _gestures);
+        ConfigureDesktopGestures();
+
+        AutoOrganize = new AutoOrganizeController(this);
+        AutoOrganize.Refresh();
 
         InitializeHotkeys();
 
@@ -191,6 +202,7 @@ public partial class App : Application
         menu.Items.Add("Show/Hide Paddocks", null, (_, _) => TogglePaddocks());
         menu.Items.Add("-");
         menu.Items.Add("Restore All Icons to Desktop", null, (_, _) => RestoreAllIcons());
+        menu.Items.Add("Auto-Organize...", null, (_, _) => Views.AutoOrganizeWindow.ShowFor(null));
         menu.Items.Add("Settings", null, (_, _) => OpenSettings());
         menu.Items.Add("Open Icons Folder", null, (_, _) => OpenFolder(IconStore.StoreRoot));
         menu.Items.Add("Open Settings Folder", null, (_, _) => OpenFolder(AppPaths.DataFolder));
@@ -221,8 +233,16 @@ public partial class App : Application
 
     private void CreateNewPaddock() => Host?.CreatePaddockInteractive();
 
-    /// <summary>Turns right-drag-to-draw on the desktop on or off (from Settings).</summary>
-    internal void SetDesktopDrawing(bool enabled) => _drawController?.SetEnabled(enabled);
+    /// <summary>
+    /// Applies the Draw on Desktop and Double-click Desktop settings: the
+    /// mouse hook runs while either is on.
+    /// </summary>
+    internal void ConfigureDesktopGestures()
+    {
+        var settings = Settings.Settings;
+        _gestures?.Configure(settings.DrawOnDesktop, settings.DoubleClickToHide);
+        _drawController?.SetEnabled(settings.DrawOnDesktop);
+    }
 
     private void TogglePaddocks() => Host?.ToggleQuickHide();
 
@@ -360,7 +380,9 @@ public partial class App : Application
         PaddockManager?.SaveLayout();
 
         _hotkeys?.Dispose();
+        _gestures?.Dispose();
         _drawController?.Dispose();
+        AutoOrganize?.Dispose();
         Host?.Dispose();
         ShellHookService?.Dispose();
         DesktopIconService?.Dispose();

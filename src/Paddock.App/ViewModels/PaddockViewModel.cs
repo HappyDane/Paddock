@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Paddock.App.Helpers;
 using Paddock.Core.Models;
 using Paddock.Core.Services;
 
@@ -41,7 +42,17 @@ public class PaddockViewModel : INotifyPropertyChanged
     /// </summary>
     private readonly DispatcherTimer _saveSoon;
 
+    /// <summary>
+    /// Above this opacity a frosted paddock would show almost none of its
+    /// glass, so turning frosted glass on brings the tint down to this.
+    /// </summary>
+    private const double FrostedOpacityCeiling = 0.75;
+    private const double FrostedOpacity = 0.45;
+
     public event Action? RemoveRequested;
+
+    /// <summary>Items just arrived (an auto-organize rule sent them): show where they went.</summary>
+    public event Action? ArrivalHighlightRequested;
 
     public PaddockViewModel(PaddockModel model, PaddockManager manager)
     {
@@ -57,6 +68,14 @@ public class PaddockViewModel : INotifyPropertyChanged
         };
 
         Swatches = Palette.Select(p => new ColorSwatch(p.Name, p.Hex)).ToList();
+        BackgroundPicker = new EyedropperChoice(ColorTarget.Background, "Pick a colour from the screen", "Pick paddock colour");
+        ColorChoices = [.. Swatches, BackgroundPicker];
+
+        TintSwatches = TintPalette.Select(p => new ColorSwatch(p.Name, p.Hex, $"{p.Name} icon tint")).ToList();
+        NoTint = new NoTintChoice();
+        TintPicker = new EyedropperChoice(ColorTarget.IconTint, "Pick a tint from the screen", "Pick icon tint");
+        TintChoices = [NoTint, .. TintSwatches, TintPicker];
+
         UpdateSwatchSelection();
 
         RefreshIcons();
@@ -242,6 +261,120 @@ public class PaddockViewModel : INotifyPropertyChanged
 
     public IReadOnlyList<ColorSwatch> Swatches { get; }
 
+    /// <summary>The swatches plus the eyedropper, which shows a picked colour once there is one.</summary>
+    public IReadOnlyList<object> ColorChoices { get; }
+
+    public EyedropperChoice BackgroundPicker { get; }
+
+    /// <summary>
+    /// Icon tints: vivid, because they colour small icons rather than a large
+    /// panel. Mono has no saturation, so it turns icons greyscale.
+    /// </summary>
+    public static readonly IReadOnlyList<(string Name, string Hex)> TintPalette =
+    [
+        ("Mono", "#8E8E93"),
+        ("Blue", "#0A84FF"),
+        ("Teal", "#40C8E0"),
+        ("Green", "#30D158"),
+        ("Yellow", "#FFD60A"),
+        ("Orange", "#FF9F0A"),
+        ("Pink", "#FF375F"),
+        ("Purple", "#BF5AF2"),
+    ];
+
+    public IReadOnlyList<ColorSwatch> TintSwatches { get; }
+
+    public NoTintChoice NoTint { get; }
+
+    public EyedropperChoice TintPicker { get; }
+
+    /// <summary>"No tint", the tint swatches, and the eyedropper.</summary>
+    public IReadOnlyList<object> TintChoices { get; }
+
+    // --- Frosted glass ---
+
+    /// <summary>
+    /// The wallpaper shows through blurred, under the paddock's colour. The
+    /// window applies the effect itself (see <see cref="Views.PaddockWindow"/>).
+    /// </summary>
+    public bool FrostedGlass
+    {
+        get => _model.Style.FrostedGlass;
+        set
+        {
+            if (_model.Style.FrostedGlass == value)
+                return;
+
+            _model.Style.FrostedGlass = value;
+
+            if (value && _model.Style.Opacity >= FrostedOpacityCeiling)
+                _model.Style.Opacity = FrostedOpacity;
+
+            AppearanceChanged();
+        }
+    }
+
+    public bool IsBackgroundSolid
+    {
+        get => !FrostedGlass;
+        set { if (value) FrostedGlass = false; }
+    }
+
+    public bool IsBackgroundFrosted
+    {
+        get => FrostedGlass;
+        set { if (value) FrostedGlass = true; }
+    }
+
+    // --- Icon tint ---
+
+    /// <summary>The colour icons take on, as #RRGGBB, or null for none.</summary>
+    public string? IconTint
+    {
+        get => _model.Style.IconTint;
+        set
+        {
+            _model.Style.IconTint = HexColor.TryParse(value, out var r, out var g, out var b)
+                ? HexColor.Format(r, g, b)
+                : null;
+            AppearanceChanged();
+        }
+    }
+
+    public double IconTintStrength
+    {
+        get => _model.Style.IconTintStrength;
+        set
+        {
+            // In steps of 5%: each step re-tints every icon, and a slider sends many.
+            _model.Style.IconTintStrength = Math.Round(Math.Clamp(value, 0.1, 1) * 20) / 20;
+            AppearanceChanged();
+        }
+    }
+
+    public string IconTintStrengthText => $"{Math.Round(_model.Style.IconTintStrength * 100):0}%";
+
+    public bool HasIconTint => CurrentTint is not null;
+
+    public Visibility TintStrengthVisibility => HasIconTint ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>What icons are drawn with, or null when they keep their own colours.</summary>
+    private IconTintSpec? CurrentTint
+        => HexColor.TryParse(_model.Style.IconTint, out var r, out var g, out var b)
+            ? new IconTintSpec(r, g, b, _model.Style.IconTintStrength)
+            : null;
+
+    /// <summary>Applies a colour from the eyedropper to whatever it was picking for.</summary>
+    public void ApplyPickedColor(ColorTarget target, Color colour)
+    {
+        var hex = HexColor.Format(colour.R, colour.G, colour.B);
+
+        if (target == ColorTarget.IconTint)
+            IconTint = hex;
+        else
+            BackgroundColor = hex;
+    }
+
     /// <summary>
     /// Background including the configured transparency. The alpha lives in the
     /// brush rather than on the element's Opacity so that icons and labels stay
@@ -376,12 +509,15 @@ public class PaddockViewModel : INotifyPropertyChanged
 
     public Brush IconHoverBrush => UsesDarkText ? DarkHover : LightHover;
 
-    /// <summary>Puts colour, opacity, icon size, font and title back to the defaults.</summary>
+    /// <summary>Puts colour, glass, opacity, tint, icon size, font and title back to the defaults.</summary>
     public void ResetAppearance()
     {
         var defaults = new PaddockStyle();
         _model.Style.BackgroundColor = defaults.BackgroundColor;
         _model.Style.Opacity = defaults.Opacity;
+        _model.Style.FrostedGlass = defaults.FrostedGlass;
+        _model.Style.IconTint = defaults.IconTint;
+        _model.Style.IconTintStrength = defaults.IconTintStrength;
         _model.Style.IconSize = defaults.IconSize;
         _model.Style.Font = defaults.Font;
         AppearanceChanged();
@@ -403,6 +539,10 @@ public class PaddockViewModel : INotifyPropertyChanged
         InvalidateBrushes();
         UpdateSwatchSelection();
 
+        var tint = CurrentTint;
+        foreach (var icon in Icons)
+            icon.SetTint(tint);
+
         foreach (var name in AppearanceProperties)
             OnPropertyChanged(name);
 
@@ -419,12 +559,26 @@ public class PaddockViewModel : INotifyPropertyChanged
         nameof(LabelFontSize), nameof(LabelLineHeight), nameof(LabelMaxHeight),
         nameof(Font), nameof(IsFontSystem), nameof(IsFontCompact), nameof(IsFontSerif), nameof(IsFontMono),
         nameof(TextFontFamily), nameof(LabelBrush), nameof(TitleBrush), nameof(IconHoverBrush),
+        nameof(FrostedGlass), nameof(IsBackgroundSolid), nameof(IsBackgroundFrosted),
+        nameof(IconTint), nameof(IconTintStrength), nameof(IconTintStrengthText),
+        nameof(HasIconTint), nameof(TintStrengthVisibility),
     ];
 
     private void UpdateSwatchSelection()
     {
+        var background = _model.Style.BackgroundColor;
         foreach (var swatch in Swatches)
-            swatch.IsSelected = string.Equals(swatch.Hex, _model.Style.BackgroundColor, StringComparison.OrdinalIgnoreCase);
+            swatch.IsSelected = string.Equals(swatch.Hex, background, StringComparison.OrdinalIgnoreCase);
+
+        // A colour that is none of the swatches came from the eyedropper (or settings.json).
+        BackgroundPicker.Show(Swatches.Any(s => s.IsSelected) ? null : background);
+
+        var tint = _model.Style.IconTint;
+        NoTint.IsSelected = tint is null;
+        foreach (var swatch in TintSwatches)
+            swatch.IsSelected = string.Equals(swatch.Hex, tint, StringComparison.OrdinalIgnoreCase);
+
+        TintPicker.Show(tint is null || TintSwatches.Any(s => s.IsSelected) ? null : tint);
     }
 
     // --- Icons ---
@@ -477,7 +631,7 @@ public class PaddockViewModel : INotifyPropertyChanged
             if (existing >= 0)
                 Icons.Move(existing, index);
             else
-                Icons.Insert(index, new IconViewModel(desired[index]));
+                Icons.Insert(index, new IconViewModel(desired[index], CurrentTint));
         }
 
         while (Icons.Count > desired.Count)
@@ -649,6 +803,9 @@ public class PaddockViewModel : INotifyPropertyChanged
         RemoveRequested?.Invoke();
     }
 
+    /// <summary>Briefly outlines the paddock, so the user sees where new items went.</summary>
+    public void HighlightArrival() => ArrivalHighlightRequested?.Invoke();
+
     private Brush BuildBackgroundBrush()
     {
         var colour = ParseColour(_model.Style.BackgroundColor, FallbackBackground);
@@ -705,10 +862,11 @@ public sealed class ColorSwatch : INotifyPropertyChanged
 {
     private bool _isSelected;
 
-    public ColorSwatch(string name, string hex)
+    public ColorSwatch(string name, string hex, string? automationName = null)
     {
         Name = name;
         Hex = hex;
+        AutomationName = automationName ?? name;
 
         var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
         brush.Freeze();
@@ -719,7 +877,99 @@ public sealed class ColorSwatch : INotifyPropertyChanged
 
     public string Hex { get; }
 
+    /// <summary>Name for screen readers (and the smoke test): tints say they are tints.</summary>
+    public string AutomationName { get; }
+
     public Brush Brush { get; }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value)
+                return;
+
+            _isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+}
+
+/// <summary>What a colour from the eyedropper is for.</summary>
+public enum ColorTarget
+{
+    Background,
+    IconTint,
+}
+
+/// <summary>
+/// The eyedropper at the end of a row of swatches. Once it has picked a
+/// colour that is none of the swatches, it shows that colour, ringed.
+/// </summary>
+public sealed class EyedropperChoice : INotifyPropertyChanged
+{
+    private static readonly Brush LightGlyph = Frozen(Colors.White);
+    private static readonly Brush DarkGlyph = Frozen(Color.FromRgb(0x1C, 0x1C, 0x1E));
+
+    private Brush? _fill;
+    private Brush? _glyph;
+
+    public EyedropperChoice(ColorTarget target, string toolTip, string automationName)
+    {
+        Target = target;
+        ToolTip = toolTip;
+        AutomationName = automationName;
+    }
+
+    public ColorTarget Target { get; }
+
+    public string ToolTip { get; }
+
+    public string AutomationName { get; }
+
+    /// <summary>The picked colour, or null while a swatch (or nothing) is chosen.</summary>
+    public Brush? Fill => _fill;
+
+    /// <summary>The eyedropper glyph's colour; null to use the theme's text colour.</summary>
+    public Brush? Glyph => _glyph;
+
+    public bool IsSelected => _fill is not null;
+
+    internal void Show(string? hex)
+    {
+        Brush? fill = null;
+        Brush? glyph = null;
+
+        if (HexColor.TryParse(hex, out var r, out var g, out var b))
+        {
+            fill = Frozen(Color.FromRgb(r, g, b));
+            glyph = ColorContrast.PrefersDarkText(r, g, b, 1) ? DarkGlyph : LightGlyph;
+        }
+
+        _fill = fill;
+        _glyph = glyph;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Fill)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Glyph)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+    }
+
+    private static Brush Frozen(Color colour)
+    {
+        var brush = new SolidColorBrush(colour);
+        brush.Freeze();
+        return brush;
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+}
+
+/// <summary>"No tint" at the start of the tint swatches.</summary>
+public sealed class NoTintChoice : INotifyPropertyChanged
+{
+    private bool _isSelected;
 
     public bool IsSelected
     {

@@ -12,6 +12,12 @@ Create styled zones on your desktop to group and organize icons. Clean, minimal,
 
 **Appearance** — Right-click a zone → **Appearance…** for a small panel beside it: a row of soft colours, an opacity slider, icon size (small / medium / large), font (system, compact, serif, mono) and when to show the title. Every change shows immediately; **Reset** goes back to the standard look. Text picks light or dark by itself so labels stay readable on any colour, and transparency applies to the panel only, so icons and labels stay crisp. Menus and tooltips follow the dark or light theme.
 
+**Frosted glass** — Set a zone's background to **Frosted glass** and the wallpaper shows through it, blurred, under the zone's colour — the Windows 11 look. The opacity slider then sets how strong the tint over the glass is. Settings can make it the default for new zones.
+
+**Icon tint & eyedropper** — Give every icon in a zone one hue (blue, teal, mono, …) while each keeps its own light and shade, with a strength slider. The eyedropper at the end of each row of colours picks any colour straight off your screen — click a spot on the wallpaper and the zone (or its icons) takes that colour. Arrow keys nudge it one pixel at a time; Esc cancels.
+
+**Auto-Organize** — Rules put new desktop items into zones by themselves: by file type (`.pdf, .docx`), kind (images, installers, archives…), name (`Screenshot*` or a regular expression), where it came from (downloaded from the internet, or moved out of your Downloads folder), or — for shortcuts — the kind of app it starts (games, creative tools, development, office, browsers, chat, media). Rules run top to bottom, first match wins, and a catch-all can take whatever is left. Ready-made rules (*Installers → Installers*, *PDFs → Documents*, *Images → Screenshots*, *Anything from Downloads → Downloads*, *Game shortcuts → Games*, …) create their zone if you don't have it. **Organize Desktop Now** applies the rules to what is already there, after showing what will move. Open it from the tray, Settings, or a zone's menu → **Auto-Organize…**. An item you drag out of a zone always stays where you put it, and nothing is moved while it is still downloading or being renamed.
+
 **Sorting** — Sort icons within any zone by name, date modified, file type, or file size. Ascending or descending, persisted per zone.
 
 **Titles** — Name your zones. Set title visibility to always visible, hover-only, or hidden. Right-click → Rename edits the title in place.
@@ -20,7 +26,7 @@ Create styled zones on your desktop to group and organize icons. Clean, minimal,
 
 **Drag & Drop** — Drag desktop icons into a zone (one at a time or a whole selection) and they leave the desktop. Drag them between zones, or back out onto the desktop where you drop them.
 
-**Quick Hide** — Hide and show all zones from the tray icon (double-click it) or with a hotkey (`Ctrl+F12` by default). Mark specific zones as "always visible" to exclude them.
+**Quick Hide** — Double-click an empty spot on the desktop to hide all zones *and* the desktop's own icons; double-click again to bring them back. The tray icon (double-click it) and a hotkey (`Ctrl+F12` by default) do the same. Mark specific zones as "always visible" to exclude them, or turn off hiding the desktop icons in Settings. If Paddock ever stops while they are hidden, the desktop icons come back the next time it starts.
 
 **Layout Snapshots** — Save your zone layout as a named profile. Switch between profiles, export as `.paddock` files, share with others.
 
@@ -139,12 +145,13 @@ if you ever need to see what the app thought it was doing. Settings include:
 
 - Theme (dark/light)
 - Default opacity and corner radius for new zones
-- Quick Hide toggle and hotkey
+- Quick Hide toggle and hotkey; double-click desktop to hide; hide the desktop icons too
+- Frosted glass for new zones
 - Draw on Desktop (right-drag to create a zone; on by default)
 - Snap-to-edge and intelligent spacing
 - Roll-up expand mode (click/hover)
 - Layout profiles (corrals)
-- Auto-sort rules
+- Auto-organize rules and their on/off switch
 
 ---
 
@@ -159,6 +166,18 @@ if you ever need to see what the app thought it was doing. Settings include:
   are sized from the primary monitor's scale factor.
 - **No multi-select inside a zone** yet — icons are dragged and launched one at a
   time, and ordering comes from the zone's sort setting rather than free placement.
+- **Auto-Organize watches your own desktop only.** Shortcuts an installer puts on
+  the all-users desktop are not routed (that would mean a permission prompt out of
+  nowhere); drag those in by hand. Items that arrived while Paddock was closed
+  wait until you choose **Organize Desktop Now**, which likewise covers only your
+  own desktop.
+- **Frosted glass corners** are cut by a window region, which has no
+  anti-aliasing, so the rounded edge of a frosted zone is a touch crisper than a
+  solid one's.
+- **App categories for shortcuts** come from a built-in list of well-known
+  programs and game libraries (Steam, Epic, GOG, Battle.net, Adobe, JetBrains,
+  Office, …). An app it does not know is not categorised; a name or folder rule
+  can still route it.
 
 ---
 
@@ -168,7 +187,7 @@ See [ROADMAP.md](ROADMAP.md) for the full plan.
 
 **v1.0** — Core organizer (zones, sorting, styling, drag-drop, snapshots, installer)
 
-**v2.0** — Tabbed zone groups, search across zones, wallpaper-aware theming, drag-to-action zones, auto-organization rules
+**v2.0** — Tabbed zone groups, search across zones, wallpaper-aware theming, drag-to-action zones
 
 **v3.0** — Peek mode, folder portals, multi-monitor, desktop pages
 

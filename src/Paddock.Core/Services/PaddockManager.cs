@@ -53,7 +53,8 @@ public class PaddockManager
             Style = new PaddockStyle
             {
                 Opacity = settings.DefaultOpacity,
-                CornerRadius = settings.DefaultCornerRadius
+                CornerRadius = settings.DefaultCornerRadius,
+                FrostedGlass = settings.DefaultFrostedGlass,
             }
         };
 
@@ -174,6 +175,37 @@ public class PaddockManager
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Moves items off the user's own desktop into a paddock, for the
+    /// auto-organize rules. Unlike <see cref="AddIconsToPaddock"/>, an item that
+    /// cannot be moved (still being written, say, or not on this desktop at
+    /// all) is left alone rather than referenced: a rule must never leave an
+    /// icon both on the desktop and in a paddock. Returns the entries added.
+    /// </summary>
+    public IReadOnlyList<IconEntry> MoveDesktopItemsIntoPaddock(string paddockId, IEnumerable<string> paths)
+    {
+        var paddock = GetPaddock(paddockId);
+        if (paddock is null || _iconStore is null)
+            return [];
+
+        var added = new List<IconEntry>();
+
+        using (DeferSave())
+        {
+            foreach (var path in paths.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!_iconStore.IsOnDesktop(path))
+                    continue;
+
+                var moved = _iconStore.MoveIntoPaddock(path, paddockId);
+                if (moved is not null)
+                    added.Add(AddEntry(paddock, moved, managed: true));
+            }
+        }
+
+        return added;
     }
 
     private List<IconEntry> FinishSharedCopies(PaddockModel paddock, List<(string Original, string Copy)> copies)

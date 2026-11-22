@@ -64,9 +64,12 @@ internal sealed class SmokeTest
         Step("Sort By > File Size reorders the icons", SortBySize);
         Step("Sort By > Date Modified reorders the icons", SortByDate);
         Step("Sort By > Ascending reverses the order", ToggleAscending);
+        Step("An auto-organize rule moves a new desktop file in, and leaves it out once dragged out", AutoOrganizeRule);
         Step("Appearance… changes colour, icon size and opacity live, and Reset undoes them", ChangeAppearance);
+        Step("The eyedropper, frosted glass and icon tint apply live, and Reset undoes them", EyedropperGlassAndTint);
         Step("Clicking a paddock does not lift it above an application", ClickStaysBelowApps);
         Step("Show Desktop (Win+D) keeps the paddock visible", ShowDesktopKeepsPaddock);
+        Step("Double-clicking empty desktop hides the paddock and desktop icons, and shows them again", DoubleClickHidesAndShows);
         Step("Dragging an icon out puts it back on the desktop", DragIconOut);
         Step("An all-users desktop shortcut can be grouped", GroupSharedItem);
         Step("Icons and layout survive a restart", Restart);
@@ -111,6 +114,9 @@ internal sealed class SmokeTest
         File.WriteAllText(SettingsFile, $$"""
             {
               "startWithWindows": false,
+              "autoSortRules": [
+                { "matchType": "nameGlob", "pattern": "Smoke Routed*", "targetPaddockId": "{{PaddockId}}" }
+              ],
               "corrals": {
                 "default": {
                   "name": "default",
@@ -240,6 +246,153 @@ internal sealed class SmokeTest
         // Clicking away closes the panel, as with any popover.
         Native.Click(BareSpot(300, 620));
         WaitUntil(() => FindAppElement("Blue", ControlType.Button) is null, "the Appearance panel to close");
+    }
+
+    private void AutoOrganizeRule()
+    {
+        const string name = "Smoke Routed.txt";
+        var onDesktop = Path.Combine(_desktop, name);
+        var inPaddock = Path.Combine(PaddockFolder, name);
+
+        try
+        {
+            File.WriteAllText(onDesktop, new string('r', 150));
+
+            WaitUntil(() => File.Exists(inPaddock) && !File.Exists(onDesktop),
+                "the rule to move 'Smoke Routed.txt' into the paddock", TimeSpan.FromSeconds(15));
+            WaitUntil(() => PaddockItems().Contains("Smoke Routed"), "'Smoke Routed' to show in the paddock");
+
+            // Taken out by hand, it stays out: a rule never sends back what the user removed.
+            MinimiseOtherWindows();
+            Native.Drag(PaddockItemCentre("Smoke Routed"), BareDesktopPoint());
+            WaitUntil(() => File.Exists(onDesktop) && !File.Exists(inPaddock), "'Smoke Routed.txt' to come back to the desktop");
+
+            Thread.Sleep(5000);
+            Check(File.Exists(onDesktop) && !File.Exists(inPaddock), "The rule moved 'Smoke Routed.txt' straight back into the paddock.");
+        }
+        finally
+        {
+            // Out of the way of the steps that compare what the paddock holds.
+            foreach (var path in new[] { onDesktop, inPaddock })
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+
+            Native.RefreshDesktop(_desktop);
+            WaitUntil(() => !PaddockItems().Contains("Smoke Routed"), "'Smoke Routed' to leave the paddock");
+        }
+    }
+
+    private void EyedropperGlassAndTint()
+    {
+        MinimiseOtherWindows();
+
+        // A pixel of wallpaper, read before anything of Paddock's is over it.
+        var spot = BareDesktopPoint();
+        var expected = Native.PixelAt(spot);
+        Info($"Wallpaper at {spot} is {expected}.");
+
+        OpenAppearancePanel();
+
+        ClickElement(WaitFor(() => FindAppElement("Pick paddock colour", ControlType.Button), "the eyedropper button", TimeSpan.FromSeconds(3)));
+        WaitUntil(() => FindAppWindow("Pick a colour") != IntPtr.Zero, "the eyedropper to open", onTimeout: DescribeAppWindows);
+
+        Native.MoveTo(spot);
+        Thread.Sleep(500);
+        KeepImage("eyedropper", new Rectangle(spot.X - 10, spot.Y - 10, 200, 200));
+        Screenshot("eyedropper");
+        Native.Click(spot);
+
+        WaitUntil(() => StyleSetting("backgroundColor") == expected, $"the picked colour {expected} to be saved",
+            onTimeout: () => $"backgroundColor is {StyleSetting("backgroundColor")}");
+        WaitUntil(() => FindAppWindow("Pick a colour") == IntPtr.Zero, "the eyedropper to close");
+        WaitUntil(() => FindAppElement("Frosted glass", ControlType.RadioButton) is not null,
+            "the Appearance panel to come back after picking", TimeSpan.FromSeconds(5));
+
+        ClickElement(FindAppElement("Frosted glass", ControlType.RadioButton)!);
+        WaitUntil(() => StyleSetting("frostedGlass") == "true" && StyleSetting("opacity") == "0.45",
+            "frosted glass (with a lighter tint) to be saved",
+            onTimeout: () => $"frostedGlass is {StyleSetting("frostedGlass")}, opacity {StyleSetting("opacity")}");
+
+        Thread.Sleep(600);
+        var rect = PaddockRect;
+        ExpectPaddockAt(new Point(rect.Left + 30, rect.Top + rect.Height / 2));
+        ExpectPaddockAt(new Point(rect.Left + rect.Width / 2, rect.Top + 4));
+
+        ClickElement(WaitFor(() => FindAppElement("Blue icon tint", ControlType.Button), "the Blue icon tint", TimeSpan.FromSeconds(3)));
+        WaitUntil(() => StyleSetting("iconTint") == "#0A84FF", "the icon tint to be saved",
+            onTimeout: () => $"iconTint is {StyleSetting("iconTint")}");
+        WaitUntil(() => FindAppElement("Tint strength", ControlType.Slider) is not null, "the tint strength slider to appear");
+
+        Thread.Sleep(500);
+        KeepImage("frosted-tinted", Union(PaddockRect, Rectangle.Empty));
+        Screenshot("frosted-tinted");
+
+        ClickElement(WaitFor(() => FindAppElement("Reset", ControlType.Button), "the Reset button", TimeSpan.FromSeconds(3)));
+        WaitUntil(() => StyleSetting("frostedGlass") == "false" && StyleSetting("iconTint") is null
+                        && StyleSetting("backgroundColor") == "#1C1C1E" && StyleSetting("opacity") == "0.88",
+            "Reset to turn off the glass and the tint",
+            onTimeout: () => $"style is {StyleSetting("backgroundColor")}, glass {StyleSetting("frostedGlass")}, " +
+                             $"tint {StyleSetting("iconTint")}, opacity {StyleSetting("opacity")}");
+
+        rect = PaddockRect;
+        ExpectPaddockAt(new Point(rect.Left + 30, rect.Top + rect.Height / 2));
+
+        Native.Click(BareSpot(300, 620));
+        WaitUntil(() => FindAppElement("Frosted glass", ControlType.RadioButton) is null, "the Appearance panel to close");
+    }
+
+    private void OpenAppearancePanel()
+    {
+        var rect = PaddockRect;
+        Native.RightClick(new Point(rect.Right - 70, rect.Bottom - 60));
+
+        var menuItem = WaitFor(() => FindMenuItem("Appearance…"), "the paddock menu", TimeSpan.FromSeconds(5));
+        ((InvokePattern)menuItem.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+        WaitFor(() => FindAppElement("Frosted glass", ControlType.RadioButton), "the Appearance panel", TimeSpan.FromSeconds(5));
+        Thread.Sleep(300);
+    }
+
+    private void DoubleClickHidesAndShows()
+    {
+        MinimiseOtherWindows();
+        var spot = BareDesktopPoint();
+        var icons = DesktopListView();
+        Info($"Double-clicking bare desktop at {spot}.");
+
+        try
+        {
+            Native.DoubleClick(spot);
+            WaitUntil(() => !Native.IsWindowVisible(_paddock), "the paddock to hide");
+            WaitUntil(() => !Native.IsWindowVisible(icons), "the desktop icons to hide with it");
+            Check(TopSetting("desktopIconsHiddenByPaddock") == "true", "settings.json does not note that Paddock hid the desktop icons.");
+            Screenshot("double-click-hidden");
+
+            Native.DoubleClick(spot);
+            WaitUntil(() => Native.IsWindowVisible(_paddock), "the paddock to come back");
+            WaitUntil(() => Native.IsWindowVisible(icons), "the desktop icons to come back");
+            Check(TopSetting("desktopIconsHiddenByPaddock") == "false", "settings.json still says the desktop icons are hidden.");
+
+            Thread.Sleep(600);
+            var rect = PaddockRect;
+            ExpectPaddockAt(new Point(rect.Left + 30, rect.Top + rect.Height / 2));
+        }
+        finally
+        {
+            // Never leave the next steps without a paddock or desktop icons to work with.
+            if (!Native.IsWindowVisible(_paddock))
+            {
+                Native.Chord(Native.VK_CONTROL, Native.VK_F12);
+                Thread.Sleep(1000);
+            }
+
+            if (!Native.IsWindowVisible(DesktopListView()))
+            {
+                Native.ToggleDesktopIcons(DesktopListView());
+                Thread.Sleep(1000);
+            }
+        }
     }
 
     private void ClickStaysBelowApps()
@@ -592,6 +745,9 @@ internal sealed class SmokeTest
         return "Paddock's visible windows: " + string.Join("; ", windows)
                + $". Foreground: {Describe(Native.GetForegroundWindow())}";
     }
+
+    private string? TopSetting(string name)
+        => JsonNode.Parse(File.ReadAllText(SettingsFile))?[name]?.ToString();
 
     private string? StyleSetting(string name)
     {

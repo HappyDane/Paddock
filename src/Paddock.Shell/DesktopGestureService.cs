@@ -6,14 +6,18 @@ namespace Paddock.Shell;
 
 /// <summary>
 /// Lets the user hold the right mouse button on empty desktop and drag out a
-/// new paddock, Fences-style — without Paddock owning any of the desktop.
+/// new paddock, Fences-style — and double-click empty desktop to hide and show
+/// the paddocks — without Paddock owning any of the desktop.
 ///
 /// A low-level mouse hook sees every mouse event and feeds them to
 /// <see cref="DesktopDrawGesture"/>. The right button is swallowed only when it
 /// goes down on bare desktop (Explorer's icon view, no icon under it); a press
 /// that never becomes a drag is replayed as a normal right-click, so the
 /// desktop's own menu still opens. Left-drag is left alone: that is the
-/// desktop's rubber-band selection.
+/// desktop's rubber-band selection. Left presses are only <em>watched</em>
+/// (<see cref="DesktopDoubleClick"/>), never swallowed: the cheap "is this the
+/// desktop?" check happens in the hook, and the cross-process "is there an
+/// icon here?" one afterwards, on this thread's message loop.
 ///
 /// The hook lives on its own thread with its own message loop. Windows makes
 /// every mouse event in the session wait for a low-level hook, so a hook on the
@@ -27,9 +31,14 @@ public sealed class DesktopGestureService : IDisposable
     private static readonly IntPtr ReplayMarker = new(0x50414444);
 
     private const uint ReplayMessage = NativeMethods.WM_APP + 1;
+    private const uint DoubleClickMessage = NativeMethods.WM_APP + 2;
 
     private readonly DesktopDrawGesture _gesture;
+    private readonly DesktopDoubleClick _doubleClick;
     private readonly object _gate = new();
+
+    private volatile bool _drawEnabled;
+    private volatile bool _doubleClickEnabled;
 
     private Thread? _thread;
     private uint _threadId;
@@ -45,7 +54,15 @@ public sealed class DesktopGestureService : IDisposable
         _gesture.Cancelled += () => DrawCancelled?.Invoke();
         _gesture.ReplayRightClick += (_, _) =>
             NativeMethods.PostThreadMessageW(_threadId, ReplayMessage, IntPtr.Zero, IntPtr.Zero);
+
+        _doubleClick = new DesktopDoubleClick(
+            NativeMethods.GetDoubleClickTime(),
+            Math.Max(1, NativeMethods.GetSystemMetrics(NativeMethods.SM_CXDOUBLECLK) / 2),
+            Math.Max(1, NativeMethods.GetSystemMetrics(NativeMethods.SM_CYDOUBLECLK) / 2));
     }
+
+    /// <summary>The user double-clicked empty desktop. Raised on the hook thread.</summary>
+    public event Action? DesktopDoubleClicked;
 
     /// <summary>The rectangle being drawn (physical pixels), as it appears and changes.</summary>
     public event Action<LayoutBounds>? DrawingChanged;
@@ -67,6 +84,27 @@ public sealed class DesktopGestureService : IDisposable
             {
                 return _thread is not null;
             }
+        }
+    }
+
+    /// <summary>
+    /// Turns the two gestures on or off. The hook runs while either is wanted
+    /// and is removed when neither is.
+    /// </summary>
+    public void Configure(bool drawOnDesktop, bool doubleClickToHide)
+    {
+        _drawEnabled = drawOnDesktop;
+        _doubleClickEnabled = doubleClickToHide;
+
+        if (drawOnDesktop || doubleClickToHide)
+        {
+            Start();
+            Log.Info($"Desktop gestures: right-drag draws a paddock {(drawOnDesktop ? "on" : "off")}, " +
+                     $"double-click hides paddocks {(doubleClickToHide ? "on" : "off")}.");
+        }
+        else
+        {
+            Stop();
         }
     }
 
@@ -127,8 +165,8 @@ public sealed class DesktopGestureService : IDisposable
 
         if (hook == IntPtr.Zero)
         {
-            Log.Warn($"Could not watch the mouse for desktop right-drags (error {Marshal.GetLastWin32Error()}). " +
-                     "New paddocks can still be drawn from the tray menu.");
+            Log.Warn($"Could not watch the mouse for desktop gestures (error {Marshal.GetLastWin32Error()}). " +
+                     "New paddocks can still be drawn, and paddocks hidden, from the tray menu.");
             lock (_gate)
             {
                 _thread = null;
@@ -137,8 +175,6 @@ public sealed class DesktopGestureService : IDisposable
             return;
         }
 
-        Log.Info("Right-drag on the desktop draws a new paddock.");
-
         try
         {
             while (NativeMethods.GetMessageW(out var message, IntPtr.Zero, 0, 0) > 0)
@@ -146,6 +182,12 @@ public sealed class DesktopGestureService : IDisposable
                 if (message.hwnd == IntPtr.Zero && message.message == ReplayMessage)
                 {
                     ReplayRightClick();
+                    continue;
+                }
+
+                if (message.hwnd == IntPtr.Zero && message.message == DoubleClickMessage)
+                {
+                    OnDoubleClick(new NativeMethods.POINT { X = (int)message.wParam, Y = (int)message.lParam });
                     continue;
                 }
 
@@ -167,7 +209,7 @@ public sealed class DesktopGestureService : IDisposable
             {
                 var info = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
 
-                if (info.dwExtraInfo != ReplayMarker && !IsPenOrTouch(info.dwExtraInfo) && Handle((int)wParam, info.pt))
+                if (info.dwExtraInfo != ReplayMarker && !IsPenOrTouch(info.dwExtraInfo) && Handle((int)wParam, info))
                     return (IntPtr)1;
             }
             catch (Exception ex)
@@ -182,8 +224,10 @@ public sealed class DesktopGestureService : IDisposable
     }
 
     /// <summary>Returns true when the event must be swallowed.</summary>
-    private bool Handle(int message, NativeMethods.POINT point)
+    private bool Handle(int message, NativeMethods.MSLLHOOKSTRUCT info)
     {
+        var point = info.pt;
+
         switch (message)
         {
             case NativeMethods.WM_MOUSEMOVE:
@@ -193,6 +237,13 @@ public sealed class DesktopGestureService : IDisposable
 
             case NativeMethods.WM_RBUTTONDOWN:
                 ButtonPressed?.Invoke(point.X, point.Y);
+                _doubleClick.OnOtherButtonDown();
+
+                // Drawing turned off: leave the right button to Explorer, unless
+                // a gesture is already under way (its release must be swallowed).
+                if (!_drawEnabled && !_gesture.IsActive)
+                    return false;
+
                 return _gesture.OnRightButtonDown(
                     point.X,
                     point.Y,
@@ -202,14 +253,48 @@ public sealed class DesktopGestureService : IDisposable
                 return _gesture.OnRightButtonUp(point.X, point.Y);
 
             case NativeMethods.WM_LBUTTONDOWN:
+                ButtonPressed?.Invoke(point.X, point.Y);
+                _gesture.OnOtherButtonDown();
+
+                if (_doubleClickEnabled
+                    && _doubleClick.OnLeftButtonDown(
+                        info.time,
+                        point.X,
+                        point.Y,
+                        DesktopListView.SurfaceAt(point) != DesktopListView.Surface.NotDesktop))
+                {
+                    // Whether it was on an icon needs Explorer: ask once the hook has returned.
+                    NativeMethods.PostThreadMessageW(_threadId, DoubleClickMessage, point.X, point.Y);
+                }
+
+                return false;
+
             case NativeMethods.WM_MBUTTONDOWN:
             case NativeMethods.WM_XBUTTONDOWN:
                 ButtonPressed?.Invoke(point.X, point.Y);
                 _gesture.OnOtherButtonDown();
+                _doubleClick.OnOtherButtonDown();
                 return false;
 
             default:
                 return false;
+        }
+    }
+
+    /// <summary>A double-click landed on the desktop: act on it if no icon was under it.</summary>
+    private void OnDoubleClick(NativeMethods.POINT point)
+    {
+        try
+        {
+            if (!DesktopListView.IsEmptyDesktop(point))
+                return;
+
+            Log.Info($"Double-click on empty desktop at {point.X},{point.Y}.");
+            DesktopDoubleClicked?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Handling a desktop double-click failed.", ex);
         }
     }
 

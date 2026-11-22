@@ -108,6 +108,81 @@ public sealed class DesktopIconService : IDisposable
     public IReadOnlyList<DesktopIconSpot> GetIconSpots() => DesktopFolderView.GetIconSpots();
 
     /// <summary>
+    /// Whether the desktop's own icons are showing, or <c>null</c> when the
+    /// desktop's icon view cannot be found.
+    /// </summary>
+    public bool? AreDesktopIconsShown()
+    {
+        var listView = DesktopListView.Find();
+        return listView == IntPtr.Zero ? null : NativeMethods.IsWindowVisible(listView);
+    }
+
+    /// <summary>
+    /// Shows or hides the desktop's own icons the way the desktop menu's
+    /// View → Show desktop icons does (Explorer remembers it, and the user can
+    /// always undo it from that menu). Returns true when the icons end up in
+    /// the requested state.
+    /// </summary>
+    public bool SetDesktopIconsShown(bool shown)
+    {
+        var listView = DesktopListView.Find();
+        if (listView == IntPtr.Zero)
+            return false;
+
+        if (NativeMethods.IsWindowVisible(listView) == shown)
+            return true;
+
+        var view = NativeMethods.GetParent(listView);
+        var answered = NativeMethods.SendMessageTimeoutW(
+            view,
+            NativeMethods.WM_COMMAND,
+            NativeMethods.DesktopToggleIconsCommand,
+            IntPtr.Zero,
+            NativeMethods.SMTO_ABORTIFHUNG,
+            2000,
+            out _) != IntPtr.Zero;
+
+        var now = NativeMethods.IsWindowVisible(listView);
+        if (now != shown)
+            Log.Warn($"Could not {(shown ? "show" : "hide")} the desktop icons (Explorer {(answered ? "ignored" : "did not answer")} the request).");
+
+        return now == shown;
+    }
+
+    /// <summary>The user's Downloads folder (wherever they moved it).</summary>
+    public static string DownloadsFolder
+    {
+        get
+        {
+            try
+            {
+                if (NativeMethods.SHGetKnownFolderPath(NativeMethods.FOLDERID_Downloads, 0, IntPtr.Zero, out var pointer) == 0)
+                {
+                    try
+                    {
+                        var path = System.Runtime.InteropServices.Marshal.PtrToStringUni(pointer);
+                        if (!string.IsNullOrEmpty(path))
+                            return path;
+                    }
+                    finally
+                    {
+                        System.Runtime.InteropServices.Marshal.FreeCoTaskMem(pointer);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Cannot look up the Downloads folder: {ex.Message}");
+            }
+
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        }
+    }
+
+    /// <summary>Watches for items arriving on the desktop, for the auto-organize rules.</summary>
+    public DesktopArrivalWatcher CreateArrivalWatcher() => new(DesktopRoot, StoreRoot);
+
+    /// <summary>
     /// Watches the store for changes made outside the app (files dropped into a
     /// paddock folder from Explorer, items deleted, and so on). The callback is
     /// debounced and raised on a background thread — marshal to the UI yourself.

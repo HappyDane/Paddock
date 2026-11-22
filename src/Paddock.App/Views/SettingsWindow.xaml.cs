@@ -12,4 +12,6 @@ public partial class SettingsWindow : Window
         var app = (App)Application.Current;
         DataContext = new SettingsViewModel(app.Settings);
     }
+
+    private void AutoOrganize_Click(object sender, RoutedEventArgs e) => AutoOrganizeWindow.ShowFor(null);
 }

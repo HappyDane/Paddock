@@ -65,8 +65,12 @@
                 <MenuItem Header="Images" Tag="Images" Click="ContextMenu_FillFromDesktop" />
                 <MenuItem Header="Media" Tag="Media" Click="ContextMenu_FillFromDesktop" />
                 <MenuItem Header="Archives" Tag="Archives" Click="ContextMenu_FillFromDesktop" />
+                <MenuItem Header="Installers" Tag="Installers" Click="ContextMenu_FillFromDesktop" />
                 <MenuItem Header="Everything else" Tag="Other" Click="ContextMenu_FillFromDesktop" />
             </MenuItem>
+            <MenuItem Header="Auto-Organize…"
+                      ToolTip="Rules that put new desktop items in a paddock by themselves"
+                      Click="ContextMenu_AutoOrganize" />
             <Separator />
             <MenuItem Header="{Binding RollUpMenuText}" Click="ContextMenu_ToggleRollUp" />
             <MenuItem Header="Lock Position" IsCheckable="True"

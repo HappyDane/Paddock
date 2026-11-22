@@ -43,6 +43,7 @@ The foundation. Everything needed to replace a cluttered desktop with organized 
 - [ ] Free icon placement inside a paddock (currently a reflowing grid)
 - [x] Per-paddock Appearance panel: colour, opacity, icon size, font, title
 - [x] Rounded, theme-coloured menus and tooltips; no close button (Close Paddock is in the menu)
+- [x] Double-click empty desktop to hide/show paddocks (and the desktop icons)
 - [ ] Fade animation on quick hide, smooth roll-up animation
 - [ ] Corral management UI (currently model + service only)
 - [ ] MSI/MSIX installer
@@ -82,17 +83,21 @@ Polish and productivity. The features that make you never want to go back.
 - [ ] Manual drag-to-reorder within a paddock
 
 ### Advanced Styling
-- [ ] Acrylic/blur backgrounds (Windows 11 Mica)
+- [x] Frosted glass backgrounds (the wallpaper, blurred, under the paddock's colour)
+- [x] Icon tint per paddock, and an eyedropper that picks colours off the screen
 - [ ] Custom JSON theme files
 - [ ] Background image per paddock
 - [ ] Gradient backgrounds
 - [ ] Shadow intensity control
 
 ### Auto-Organization Rules
-- [ ] Auto-sort new desktop files by extension
-- [ ] Auto-sort by name pattern (glob/regex)
-- [ ] Catch-all paddock for uncategorized items
-- [ ] Rule editor in settings
+- [x] Auto-sort new desktop files by extension or kind
+- [x] Auto-sort by name pattern (glob/regex)
+- [x] By origin: downloaded from the internet, or came from a folder (e.g. Downloads)
+- [x] Shortcuts by kind of app (games, creative, development, office, …)
+- [x] Catch-all paddock for uncategorized items
+- [x] Rule editor, with ready-made rules that create their paddock
+- [ ] Rules for items arriving on the all-users desktop
 
 ### Drag-to-Action Zones
 Special paddocks that trigger actions when files are dropped:

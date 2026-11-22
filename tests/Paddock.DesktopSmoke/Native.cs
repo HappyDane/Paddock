@@ -55,6 +55,7 @@ internal static class Native
     private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
 
     internal const byte VK_CONTROL = 0x11;
+    internal const byte VK_F12 = 0x7B;
     internal const byte VK_RETURN = 0x0D;
     internal const byte VK_ESCAPE = 0x1B;
     internal const byte VK_LWIN = 0x5B;
@@ -108,6 +109,30 @@ internal static class Native
 
     /// <summary>Asks a window to close, as its close button would.</summary>
     internal static void Close(IntPtr hwnd) => PostMessageW(hwnd, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessageTimeoutW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetParent(IntPtr hwnd);
+
+    /// <summary>
+    /// Flips the desktop's View → Show desktop icons, the way Explorer's own
+    /// menu does — to put the icons back if a failed step left them hidden.
+    /// </summary>
+    internal static void ToggleDesktopIcons(IntPtr desktopListView)
+        => SendMessageTimeoutW(GetParent(desktopListView), 0x0111 /* WM_COMMAND */, 0x7402, IntPtr.Zero, 0x2 /* SMTO_ABORTIFHUNG */, 2000, out _);
+
+    /// <summary>The colour of one screen pixel, as #RRGGBB.</summary>
+    internal static string PixelAt(Point point)
+    {
+        using var pixel = new Bitmap(1, 1);
+        using (var graphics = Graphics.FromImage(pixel))
+            graphics.CopyFromScreen(point, Point.Empty, new Size(1, 1));
+
+        var colour = pixel.GetPixel(0, 0);
+        return $"#{colour.R:X2}{colour.G:X2}{colour.B:X2}";
+    }
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
@@ -183,6 +208,21 @@ internal static class Native
         Thread.Sleep(60);
         LeftUp(point);
         Thread.Sleep(250);
+    }
+
+    /// <summary>Two clicks well inside the double-click time, on exactly the same spot.</summary>
+    internal static void DoubleClick(Point point)
+    {
+        MoveTo(point);
+        Thread.Sleep(150);
+        LeftDown(point);
+        Thread.Sleep(40);
+        LeftUp(point);
+        Thread.Sleep(90);
+        LeftDown(point);
+        Thread.Sleep(40);
+        LeftUp(point);
+        Thread.Sleep(300);
     }
 
     internal static void RightClick(Point point)
