@@ -12,7 +12,18 @@ public partial class App : Application
     /// <summary>Per-user name, so Paddock still runs once per session on a shared machine.</summary>
     private const string SingleInstanceMutexName = @"Local\Paddock.SingleInstance";
 
+    /// <summary>How often the UI thread tells the watchdog it is alive.</summary>
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(2);
+
+    /// <summary>How often Paddock checks that its watchdog is still there.</summary>
+    private static readonly TimeSpan WatchdogCheckInterval = TimeSpan.FromSeconds(30);
+
     private System.Windows.Forms.NotifyIcon? _trayIcon;
+    private AppHeartbeat? _heartbeat;
+    private System.Windows.Threading.DispatcherTimer? _heartbeatTimer;
+    private System.Diagnostics.Process? _watchdog;
+    private int _restarts;
+    private DateTime _watchdogCheckedAt = DateTime.UtcNow;
     private HotkeyService? _hotkeys;
     private System.Threading.Mutex? _instanceMutex;
 
@@ -61,10 +72,12 @@ public partial class App : Application
             return;
         }
 
-        // From here on, a crash brings Paddock back: while it is not running,
-        // the icons in paddocks are not on the desktop.
-        var restarts = CrashWatchdog.RestartsFrom(e.Args);
-        CrashWatchdog.Watch(restarts);
+        // From here on, a crash or a freeze brings Paddock back: while it is
+        // not running, the icons in paddocks are not on the desktop.
+        _restarts = CrashWatchdog.RestartsFrom(e.Args);
+        StartHeartbeat();
+        _watchdog = CrashWatchdog.Watch(_restarts);
+        var restarts = _restarts;
 
         // Services
         Settings = new SettingsService();
@@ -182,6 +195,52 @@ public partial class App : Application
         {
             Source = new Uri("Resources/Controls.xaml", UriKind.Relative),
         });
+    }
+
+    /// <summary>
+    /// The UI thread's sign of life for the watchdog, at input priority: it
+    /// only beats when Paddock could also react to the user. The same timer
+    /// makes sure the watchdog itself is still running.
+    /// </summary>
+    private void StartHeartbeat()
+    {
+        _heartbeat = AppHeartbeat.Start();
+
+        _heartbeatTimer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Input)
+        {
+            Interval = HeartbeatInterval,
+        };
+
+        _heartbeatTimer.Tick += (_, _) =>
+        {
+            _heartbeat?.Beat();
+
+            if (DateTime.UtcNow - _watchdogCheckedAt >= WatchdogCheckInterval)
+            {
+                _watchdogCheckedAt = DateTime.UtcNow;
+                EnsureWatchdog();
+            }
+        };
+
+        _heartbeatTimer.Start();
+    }
+
+    /// <summary>The watchdog went (ended by hand, say): start another, so a crash is still caught.</summary>
+    private void EnsureWatchdog()
+    {
+        try
+        {
+            if (_watchdog is { HasExited: false })
+                return;
+
+            Log.Warn("Paddock's crash watchdog was not running; starting it again.");
+            _watchdog?.Dispose();
+            _watchdog = CrashWatchdog.Watch(_restarts);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not check on the crash watchdog: {ex.Message}");
+        }
     }
 
     /// <summary>A short notice from the tray icon.</summary>
@@ -393,6 +452,9 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         PaddockManager?.SaveLayout();
+
+        _heartbeatTimer?.Stop();
+        _watchdog?.Dispose();
 
         _hotkeys?.Dispose();
         _gestures?.Dispose();

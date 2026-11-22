@@ -71,8 +71,9 @@ that, and keeps it close to home:
   in `Desktop\.Paddock` and are back the moment Paddock starts (it starts with
   Windows by default). Tray → **Exit** says so and offers to put every icon back
   on the desktop first; tray → **Open Icons Folder** shows where they are.
-- **If Paddock crashes, it starts again by itself** (not after you exit it or end
-  it in Task Manager, and not over and over if it keeps crashing).
+- **If Paddock crashes or freezes, it starts again by itself** — not after you
+  exit it or end it in Task Manager. If it keeps failing, it stops trying, puts
+  every icon back on the desktop and tells you, rather than leave them hidden.
 - **Nothing is left out of sight.** If Paddock ever finds a zone folder it no
   longer knows about (say `settings.json` was damaged), its icons come back in a
   zone called **Recovered**.

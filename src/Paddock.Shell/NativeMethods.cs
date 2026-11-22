@@ -456,6 +456,19 @@ internal static partial class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool DeleteObject(IntPtr handle);
 
+    // -- The crash watchdog --
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool CheckRemoteDebuggerPresent(IntPtr process, [MarshalAs(UnmanagedType.Bool)] out bool debuggerPresent);
+
+    internal const uint MB_ICONWARNING = 0x30;
+    internal const uint MB_SETFOREGROUND = 0x10000;
+    internal const uint MB_TOPMOST = 0x40000;
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    internal static extern int MessageBoxW(IntPtr owner, string text, string caption, uint type);
+
     // -- Keeping the low-level mouse hook alive --
 
     internal const uint WM_TIMER = 0x0113;

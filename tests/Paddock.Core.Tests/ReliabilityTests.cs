@@ -36,8 +36,30 @@ public class RestartPolicyTests
         => Assert.False(RestartPolicy.Decide(unchecked((int)0xC0000005), Minutes5, 0, sessionEnding: true).Restart);
 
     [Fact]
-    public void ACrashRightAfterStarting_IsNotRestarted()
-        => Assert.False(RestartPolicy.Decide(unchecked((int)0xC0000005), TimeSpan.FromSeconds(3), 0, false).Restart);
+    public void ACrashRightAfterStarting_IsRetriedAfterAGrowingPause()
+    {
+        var crash = unchecked((int)0xC0000005);
+        var quick = TimeSpan.FromSeconds(3);
+
+        var first = RestartPolicy.Decide(crash, quick, 0, false);
+        var second = RestartPolicy.Decide(crash, quick, first.NextCount, false);
+
+        Assert.True(first.Restart && second.Restart);
+        Assert.True(first.Delay > TimeSpan.Zero && second.Delay > first.Delay);
+    }
+
+    [Fact]
+    public void ACrashAfterRunningAWhile_IsRestartedAtOnce()
+        => Assert.Equal(TimeSpan.Zero, RestartPolicy.Decide(unchecked((int)0xC0000005), Minutes5, 0, false).Delay);
+
+    [Fact]
+    public void AHang_IsRestartedLikeACrash()
+    {
+        var decision = RestartPolicy.DecideAfterHang(Minutes5, 0, false);
+        Assert.True(decision.Restart);
+        Assert.Equal(1, decision.NextCount);
+        Assert.False(RestartPolicy.DecideAfterHang(Minutes5, 0, sessionEnding: true).Restart);
+    }
 
     [Fact]
     public void RepeatedQuickCrashes_StopBeingRestarted()
@@ -52,7 +74,10 @@ public class RestartPolicyTests
             count = decision.NextCount;
         }
 
-        Assert.False(RestartPolicy.Decide(crash, TimeSpan.FromMinutes(1), count, false).Restart);
+        var last = RestartPolicy.Decide(crash, TimeSpan.FromMinutes(1), count, false);
+        Assert.False(last.Restart);
+        Assert.True(last.GaveUp, "Giving up should say so, so the icons go back on the desktop.");
+        Assert.False(RestartPolicy.Decide(0, TimeSpan.FromMinutes(1), count, false).GaveUp);
     }
 
     [Fact]
@@ -61,6 +86,55 @@ public class RestartPolicyTests
         var decision = RestartPolicy.Decide(unchecked((int)0xC0000005), TimeSpan.FromHours(2), RestartPolicy.MaxQuickRestarts, false);
         Assert.True(decision.Restart);
         Assert.Equal(1, decision.NextCount);
+    }
+}
+
+public class HangDetectorTests
+{
+    private const long Second = 1000;
+    private readonly HangDetector _detector = new();
+
+    /// <summary>Checks every 2 s from <paramref name="from"/> to <paramref name="to"/>; true if any said hung.</summary>
+    private bool WatchFor(long from, long to, Func<long, long> lastBeat, bool busy = false, bool debugged = false)
+    {
+        var hung = false;
+        for (var now = from; now <= to; now += 2 * Second)
+            hung |= _detector.IsHung(now, lastBeat(now), busy, debugged);
+        return hung;
+    }
+
+    [Fact]
+    public void ABeatingPaddock_IsNeverHung()
+        => Assert.False(WatchFor(0, 120 * Second, now => now - 1500));
+
+    [Fact]
+    public void SilenceForLongerThanTheThreshold_IsAHang()
+    {
+        Assert.False(WatchFor(0, 28 * Second, _ => 0));
+        Assert.True(WatchFor(30 * Second, 34 * Second, _ => 0));
+    }
+
+    [Fact]
+    public void WaitingOnPurpose_IsNotAHang_AndGetsAFreshThresholdAfter()
+    {
+        Assert.False(WatchFor(0, 300 * Second, _ => 0, busy: true));
+        Assert.False(WatchFor(302 * Second, 326 * Second, _ => 0));
+        Assert.True(WatchFor(328 * Second, 340 * Second, _ => 0));
+    }
+
+    [Fact]
+    public void ADebugger_PausesHangDetection()
+        => Assert.False(WatchFor(0, 300 * Second, _ => 0, debugged: true));
+
+    [Fact]
+    public void WakingFromSleep_IsNotAHang()
+    {
+        Assert.False(WatchFor(0, 10 * Second, now => now));
+
+        // The PC slept for an hour: the last beat is an hour old, but so is the last check.
+        var woke = 3610 * Second;
+        Assert.False(_detector.IsHung(woke, 10 * Second, false, false));
+        Assert.False(WatchFor(woke + 2 * Second, woke + 2 * Second, now => woke + 1 * Second));
     }
 }
 

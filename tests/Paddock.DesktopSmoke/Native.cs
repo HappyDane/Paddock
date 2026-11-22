@@ -119,6 +119,46 @@ internal static class Native
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool TerminateProcess(IntPtr process, uint exitCode);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenThread(uint access, bool inherit, uint threadId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint SuspendThread(IntPtr thread);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    /// <summary>
+    /// Freezes a process's UI thread — its first thread — the way a deadlock
+    /// would, leaving its other threads running. Returns false if it could not.
+    /// </summary>
+    internal static bool FreezeUiThread(System.Diagnostics.Process process)
+    {
+        const uint THREAD_SUSPEND_RESUME = 0x0002;
+
+        var first = process.Threads.Cast<System.Diagnostics.ProcessThread>()
+            .Select(t =>
+            {
+                try { return (Thread: t, Started: t.StartTime); }
+                catch (Exception) { return (Thread: t, Started: DateTime.MaxValue); }
+            })
+            .OrderBy(t => t.Started)
+            .First().Thread;
+
+        var handle = OpenThread(THREAD_SUSPEND_RESUME, false, (uint)first.Id);
+        if (handle == IntPtr.Zero)
+            return false;
+
+        try
+        {
+            return SuspendThread(handle) != uint.MaxValue;
+        }
+        finally
+        {
+            CloseHandle(handle);
+        }
+    }
+
     /// <summary>Ends a process with the exit code a real crash leaves behind (an access violation).</summary>
     internal static void CrashProcess(System.Diagnostics.Process process)
         => TerminateProcess(process.Handle, 0xC0000005);

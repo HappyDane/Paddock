@@ -77,6 +77,7 @@ internal sealed class SmokeTest
         Step("Dragging an icon out puts it back on the desktop", DragIconOut);
         Step("An all-users desktop shortcut can be grouped", GroupSharedItem);
         Step("After a crash, Paddock starts again by itself with its icons", RestartsAfterCrash);
+        Step("When Paddock freezes, its watchdog ends it and starts it again", RestartsAfterFreeze);
         Step("Icons and layout survive a restart", Restart);
         Step("Removing the paddock returns its icons to the desktop", RemovePaddock);
         Step("A plain right-click on the desktop still opens Explorer's menu", RightClickStillOpensDesktopMenu);
@@ -571,6 +572,35 @@ internal sealed class SmokeTest
 
         ExpectOrder(before.ToArray());
         Check(File.ReadAllText(LogFile).Contains("starting it again"), "paddock.log does not say the watchdog restarted Paddock.");
+    }
+
+    private void RestartsAfterFreeze()
+    {
+        var before = PaddockItems();
+        var frozen = _app!;
+
+        // Freezes are only judged once Paddock has been up for a minute.
+        var up = DateTime.Now - frozen.StartTime;
+        if (up < TimeSpan.FromSeconds(62))
+            Thread.Sleep(TimeSpan.FromSeconds(62) - up);
+
+        Check(Native.FreezeUiThread(frozen), "Could not freeze Paddock's UI thread.");
+        Info($"Froze Paddock's UI thread (pid {frozen.Id}).");
+
+        Process? restarted = null;
+        WaitUntil(() => (restarted = FindPaddockProcessOtherThan(frozen.Id)) is not null,
+            "the watchdog to end the frozen Paddock and start it again", TimeSpan.FromSeconds(75));
+
+        Check(frozen.WaitForExit(10000), "The frozen Paddock is still running next to the new one.");
+
+        _app = restarted;
+        WaitUntil(() => (_paddock = FindPaddockWindow()) != IntPtr.Zero, "the paddock window to come back", TimeSpan.FromSeconds(30));
+        Info($"Paddock is back as pid {restarted!.Id}.");
+        Thread.Sleep(1500);
+        Screenshot("after-freeze");
+
+        ExpectOrder(before.ToArray());
+        Check(File.ReadAllText(LogFile).Contains("stopped responding"), "paddock.log does not say the watchdog ended a frozen Paddock.");
     }
 
     /// <summary>The running Paddock that shows the test paddock, if it is not the given process.</summary>

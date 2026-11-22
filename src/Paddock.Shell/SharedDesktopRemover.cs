@@ -120,6 +120,10 @@ public sealed class SharedDesktopRemover : ISharedDesktopRemover
 
         var listFile = Path.Combine(Path.GetTempPath(), $"Paddock-shared-{Guid.NewGuid():N}.txt");
 
+        // Starting the helper waits for the user to answer the permission
+        // prompt, however long that takes: not a freeze.
+        using var waiting = AppHeartbeat.Current?.WaitingOnPurpose();
+
         try
         {
             File.WriteAllLines(listFile, paths);

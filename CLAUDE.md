@@ -92,10 +92,18 @@ tests/
   the user's own desktop (`PaddockManager.MoveDesktopItemsIntoPaddock`).
 - **Icons must never end up out of sight.** While Paddock is not running, the
   icons in paddocks are not on the desktop, so:
-  - `Program.Main` (the real entry point, before WPF loads) runs a small crash
-    watchdog per Paddock process (`Shell/CrashWatchdog`). It restarts Paddock
-    only after a *crash* exit code — never after Exit, a Task Manager / `Kill()`
-    end, while Windows signs out, or into a crash loop (`Core/RestartPolicy`).
+  - `Program.Main` (the real entry point, before WPF loads) runs a small
+    watchdog per Paddock process (`Shell/CrashWatchdog`; Paddock restarts it if
+    it goes). It restarts Paddock after a *crash* exit code — never after Exit,
+    a Task Manager / `Kill()` end, or while Windows signs out — and after a
+    *freeze*: the UI thread beats into shared memory every 2 s
+    (`Shell/AppHeartbeat`, input priority), and 30 s of silence
+    (`Core/HangDetector`; not in the first minute, under a debugger, or just
+    after sleep) gets it ended and restarted. **A wait that blocks the UI
+    thread on purpose must be wrapped in `AppHeartbeat.Current?.WaitingOnPurpose()`**
+    (the permission prompt for all-users desktop items is). Crashes at start-up
+    are retried after 2/10/30 s; after 3 quick restarts it gives up, puts every
+    icon back on the desktop and says so (`Core/RestartPolicy`).
   - On startup, a store folder no paddock owns in *any* profile (unreadable
     settings, a hand-edited file) becomes a "Recovered" paddock, and items loose
     in the store root go back to the desktop (`PaddockHost.RecoverLostIcons`).
@@ -128,8 +136,9 @@ in and out, sort, click under an app window, press Win+D, double-click the
 desktop to hide and show, pick a wallpaper pixel with the eyedropper, turn on
 frosted glass and a tint, let an auto-organize rule route a new file (and not
 an Office-style save, nor an item dragged back out), restart and remove a
-paddock, recover a folder `settings.json` forgot, survive a crash (the
-watchdog restarts it), and `--restore-all` with Paddock closed — checking files,
+paddock, recover a folder `settings.json` forgot, survive a crash and a frozen
+UI thread (the watchdog restarts it), and `--restore-all` with Paddock closed —
+checking files,
 `settings.json`, what is on screen, and `paddock.log`.
 Screenshots of every step (and of every failure) are uploaded as artifacts.
 Run it locally only on a throwaway machine: it moves desktop files and wipes
