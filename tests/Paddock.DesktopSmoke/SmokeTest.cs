@@ -993,11 +993,22 @@ internal sealed class SmokeTest
     private static Point BareSpot(int x, int y)
     {
         var point = new Point(x, y);
+
+        // A notification (Paddock's own "restarted" notice, say) passes by
+        // itself within seconds: wait for it rather than fail.
+        var waited = Stopwatch.StartNew();
+        while (waited.Elapsed < TimeSpan.FromSeconds(12) && IsNotification(Native.RootWindowAt(point)))
+            Thread.Sleep(250);
+
         var hit = Native.WindowFromPoint(new Native.POINT { X = x, Y = y });
         Check(Native.ClassOf(hit) == "SysListView32", $"{point} is not bare desktop ({Describe(Native.RootWindowAt(point))}).");
         Check(!DesktopIcons().Any(i => i.Current.BoundingRectangle.Contains(x, y)), $"{point} is on a desktop icon.");
         return point;
     }
+
+    private static bool IsNotification(IntPtr window)
+        => Native.ClassOf(window) == "Windows.UI.Core.CoreWindow"
+           && Native.TitleOf(window).Contains("notification", StringComparison.OrdinalIgnoreCase);
 
     private string? PaddockSetting(string name)
     {
