@@ -382,6 +382,69 @@ public class PaddockManager
     }
 
     /// <summary>
+    /// Folders in the store that no paddock owns — in any layout profile, not
+    /// just the active one — but that still hold items. Nothing shows those
+    /// items, so they would be lost from sight: after settings.json was
+    /// unreadable, say, or a paddock entry was removed by hand. Empty ownerless
+    /// folders are tidied away. Returns the folder names (paddock ids).
+    /// </summary>
+    public IReadOnlyList<string> FindOrphanedFolders()
+    {
+        if (_iconStore is null)
+            return [];
+
+        var owned = _settingsService.Settings.Corrals.Values
+            .SelectMany(c => c.Paddocks)
+            .Select(p => p.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var orphans = new List<string>();
+
+        foreach (var id in _iconStore.ListPaddockFolders())
+        {
+            if (owned.Contains(id))
+                continue;
+
+            if (_iconStore.ListPaddockItems(id).Count > 0)
+                orphans.Add(id);
+            else
+                _iconStore.RemoveFolderIfEmpty(id);
+        }
+
+        return orphans;
+    }
+
+    /// <summary>
+    /// Gives an orphaned store folder a paddock again: a new paddock in the
+    /// active layout whose id is the folder's name, so the items already in it
+    /// are its own. Call <see cref="ReconcilePaddocks"/> afterwards to list them.
+    /// </summary>
+    public PaddockModel AdoptFolder(string folderId, string title, double x, double y, double width, double height)
+    {
+        var settings = _settingsService.Settings;
+        var paddock = new PaddockModel
+        {
+            Id = folderId,
+            Title = title,
+            X = x,
+            Y = y,
+            Width = width,
+            Height = height,
+            TitleVisibility = TitleVisibility.Always,
+            Style = new PaddockStyle
+            {
+                Opacity = settings.DefaultOpacity,
+                CornerRadius = settings.DefaultCornerRadius,
+                FrostedGlass = settings.DefaultFrostedGlass,
+            },
+        };
+
+        _settingsService.GetActiveCorral().Paddocks.Add(paddock);
+        SaveLayout();
+        return paddock;
+    }
+
+    /// <summary>
     /// Sort icons within a paddock by the specified field and direction.
     /// </summary>
     public void SortPaddockIcons(string paddockId, SortField sortBy, bool ascending)

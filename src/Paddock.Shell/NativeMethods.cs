@@ -456,6 +456,21 @@ internal static partial class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool DeleteObject(IntPtr handle);
 
+    // -- Keeping the low-level mouse hook alive --
+
+    internal const uint WM_TIMER = 0x0113;
+
+    [LibraryImport("user32.dll")]
+    internal static partial nuint SetTimer(IntPtr hwnd, nuint id, uint elapseMs, IntPtr timerProc);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool KillTimer(IntPtr hwnd, nuint id);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetCursorPos(out POINT point);
+
     // -- Double-clicks and desktop icon visibility --
 
     internal const int SM_CXDOUBLECLK = 36;

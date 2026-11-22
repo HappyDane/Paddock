@@ -20,6 +20,7 @@ public sealed class DesktopIconService : IDisposable
 
     private static readonly string[] IgnoredNames = ["desktop.ini", "thumbs.db"];
 
+    private readonly object _watchGate = new();
     private FileSystemWatcher? _watcher;
     private System.Timers.Timer? _debounce;
     private Action? _onStoreChanged;
@@ -47,7 +48,9 @@ public sealed class DesktopIconService : IDisposable
     public IconStore CreateIconStore()
     {
         EnsureHiddenStoreRoot();
-        return new IconStore(DesktopRoot, StoreRoot, CommonDesktopRoot);
+        var store = new IconStore(DesktopRoot, StoreRoot, CommonDesktopRoot);
+        store.EnsureReadme();
+        return store;
     }
 
     /// <summary>Removes originals from the all-users desktop, asking for permission when needed.</summary>
@@ -190,17 +193,52 @@ public sealed class DesktopIconService : IDisposable
     public void WatchStore(Action onChanged)
     {
         _onStoreChanged = onChanged;
+        _debounce ??= new System.Timers.Timer(400) { AutoReset = false };
+        _debounce.Elapsed -= OnDebounceElapsed;
+        _debounce.Elapsed += OnDebounceElapsed;
+
+        StartStoreWatcher();
+    }
+
+    /// <summary>
+    /// Makes sure the store is still being watched — that the folder exists
+    /// (the user may have deleted it) and the watcher has not stopped. Cheap;
+    /// called periodically. A restarted watcher also asks for a re-sync, since
+    /// changes may have gone unseen.
+    /// </summary>
+    public void EnsureStoreWatched()
+    {
+        if (_onStoreChanged is null)
+            return;
+
+        if (Directory.Exists(StoreRoot) && _watcher is { EnableRaisingEvents: true })
+            return;
+
+        Log.Warn("The paddock store was no longer being watched; watching it again.");
+        StartStoreWatcher();
+        _onStoreChanged?.Invoke();
+    }
+
+    private void StartStoreWatcher()
+    {
+        lock (_watchGate)
+        {
+            StartStoreWatcherLocked();
+        }
+    }
+
+    private void StartStoreWatcherLocked()
+    {
+        StopStoreWatcherLocked();
 
         try
         {
             EnsureHiddenStoreRoot();
 
-            _debounce = new System.Timers.Timer(400) { AutoReset = false };
-            _debounce.Elapsed += (_, _) => _onStoreChanged?.Invoke();
-
             _watcher = new FileSystemWatcher(StoreRoot)
             {
                 IncludeSubdirectories = true,
+                InternalBufferSize = 64 * 1024,
                 NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName,
                 EnableRaisingEvents = true
             };
@@ -208,12 +246,52 @@ public sealed class DesktopIconService : IDisposable
             _watcher.Created += OnStoreEvent;
             _watcher.Deleted += OnStoreEvent;
             _watcher.Renamed += OnStoreEvent;
+            _watcher.Error += OnStoreError;
         }
         catch (Exception ex)
         {
             Log.Error($"Cannot watch '{StoreRoot}' for changes.", ex);
         }
     }
+
+    private void StopStoreWatcher()
+    {
+        lock (_watchGate)
+        {
+            StopStoreWatcherLocked();
+        }
+    }
+
+    private void StopStoreWatcherLocked()
+    {
+        if (_watcher is null)
+            return;
+
+        _watcher.EnableRaisingEvents = false;
+        _watcher.Created -= OnStoreEvent;
+        _watcher.Deleted -= OnStoreEvent;
+        _watcher.Renamed -= OnStoreEvent;
+        _watcher.Error -= OnStoreError;
+        _watcher.Dispose();
+        _watcher = null;
+    }
+
+    /// <summary>
+    /// Too many changes at once (the watcher's buffer overflowed) or the
+    /// folder went away: some changes were missed. Re-sync from disk, and
+    /// start watching afresh if the watcher gave up.
+    /// </summary>
+    private void OnStoreError(object sender, ErrorEventArgs e)
+    {
+        Log.Warn($"Missed some changes in the paddock store ({e.GetException().Message}); re-reading it.");
+
+        if (_watcher is { EnableRaisingEvents: false } || !Directory.Exists(StoreRoot))
+            StartStoreWatcher();
+
+        _onStoreChanged?.Invoke();
+    }
+
+    private void OnDebounceElapsed(object? sender, System.Timers.ElapsedEventArgs e) => _onStoreChanged?.Invoke();
 
     /// <summary>
     /// Tells the shell a folder's contents changed, so the desktop redraws
@@ -244,15 +322,7 @@ public sealed class DesktopIconService : IDisposable
 
     public void Dispose()
     {
-        if (_watcher is not null)
-        {
-            _watcher.EnableRaisingEvents = false;
-            _watcher.Created -= OnStoreEvent;
-            _watcher.Deleted -= OnStoreEvent;
-            _watcher.Renamed -= OnStoreEvent;
-            _watcher.Dispose();
-            _watcher = null;
-        }
+        StopStoreWatcher();
 
         _debounce?.Dispose();
         _debounce = null;

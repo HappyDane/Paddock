@@ -116,6 +116,13 @@ internal static class Native
     [DllImport("user32.dll")]
     private static extern IntPtr GetParent(IntPtr hwnd);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateProcess(IntPtr process, uint exitCode);
+
+    /// <summary>Ends a process with the exit code a real crash leaves behind (an access violation).</summary>
+    internal static void CrashProcess(System.Diagnostics.Process process)
+        => TerminateProcess(process.Handle, 0xC0000005);
+
     /// <summary>
     /// Flips the desktop's View → Show desktop icons, the way Explorer's own
     /// menu does — to put the icons back if a failed step left them hidden.

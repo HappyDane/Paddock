@@ -61,6 +61,11 @@ public partial class App : Application
             return;
         }
 
+        // From here on, a crash brings Paddock back: while it is not running,
+        // the icons in paddocks are not on the desktop.
+        var restarts = CrashWatchdog.RestartsFrom(e.Args);
+        CrashWatchdog.Watch(restarts);
+
         // Services
         Settings = new SettingsService();
         DesktopIconService = new DesktopIconService();
@@ -80,6 +85,12 @@ public partial class App : Application
         SessionEnding += (_, _) => PaddockManager.SaveLayout();
 
         InitializeTrayIcon();
+
+        if (restarts > 0)
+        {
+            Log.Info($"Paddock was restarted after a crash (restart {restarts}).");
+            Notify("Paddock restarted", "Paddock stopped unexpectedly and has started again. Your paddocks are back.");
+        }
 
         Host = new PaddockHost(this);
         Host.Start();
@@ -172,6 +183,10 @@ public partial class App : Application
             Source = new Uri("Resources/Controls.xaml", UriKind.Relative),
         });
     }
+
+    /// <summary>A short notice from the tray icon.</summary>
+    internal void Notify(string title, string text)
+        => _trayIcon?.ShowBalloonTip(7000, title, text, System.Windows.Forms.ToolTipIcon.Info);
 
     /// <summary>
     /// With no paddocks there is nothing on screen at all, so point the user at

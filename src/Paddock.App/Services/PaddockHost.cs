@@ -23,9 +23,16 @@ internal sealed class PaddockHost : IDisposable
     /// </summary>
     private static readonly TimeSpan ZOrderInterval = TimeSpan.FromSeconds(3);
 
+    /// <summary>
+    /// How often paddocks are re-synced with their folders regardless of
+    /// file-watcher events, which can be lost when many changes land at once.
+    /// </summary>
+    private static readonly TimeSpan ResyncInterval = TimeSpan.FromMinutes(1);
+
     private readonly App _app;
     private readonly List<PaddockWindow> _windows = new();
     private readonly DispatcherTimer _zOrderTimer;
+    private readonly DispatcherTimer _resyncTimer;
 
     /// <summary>
     /// A second re-pin shortly after a foreground change. Show Desktop moves
@@ -49,6 +56,13 @@ internal sealed class PaddockHost : IDisposable
 
         _zOrderTimer = new DispatcherTimer { Interval = ZOrderInterval };
         _zOrderTimer.Tick += (_, _) => PinAllToDesktop();
+
+        _resyncTimer = new DispatcherTimer { Interval = ResyncInterval };
+        _resyncTimer.Tick += (_, _) =>
+        {
+            _app.DesktopIconService.EnsureStoreWatched();
+            RefreshFromDisk();
+        };
 
         _iconRetryTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _iconRetryTimer.Tick += (_, _) =>
@@ -78,6 +92,7 @@ internal sealed class PaddockHost : IDisposable
         }
 
         _app.PaddockManager.ReconcilePaddocks();
+        var recovered = RecoverLostIcons();
         ClampAllToMonitors();
 
         foreach (var model in _app.PaddockManager.GetPaddocks().ToList())
@@ -90,8 +105,65 @@ internal sealed class PaddockHost : IDisposable
         _app.ShellHookService.ForegroundChanged += OnForegroundChanged;
         _app.ShellHookService.StartForegroundTracking();
         _app.DesktopIconService.WatchStore(OnStoreChanged);
+        _resyncTimer.Start();
 
         LogStartupState();
+
+        if (recovered > 0)
+        {
+            _app.Notify(
+                "Paddock found lost icons",
+                $"{recovered} icon(s) had lost their paddock. They are in \"Recovered\" — drag them wherever you like.");
+        }
+    }
+
+    /// <summary>
+    /// Makes sure nothing in the store is out of sight. A paddock folder that
+    /// no paddock owns any more (settings.json was unreadable, say) gets a
+    /// "Recovered" paddock; items loose at the top of the store go back on the
+    /// desktop. Returns how many items were recovered into paddocks.
+    /// </summary>
+    private int RecoverLostIcons()
+    {
+        var manager = _app.PaddockManager;
+        var store = _app.IconStore;
+
+        foreach (var stray in store.ListStrayItems())
+        {
+            if (store.MoveToDesktop(stray) is { } back)
+                Log.Info($"'{System.IO.Path.GetFileName(back)}' was loose in the paddock store; put it back on the desktop.");
+        }
+
+        var orphans = manager.FindOrphanedFolders();
+        if (orphans.Count == 0)
+            return 0;
+
+        var areas = ScreenHelper.GetWorkAreas();
+        var primary = areas.FirstOrDefault(a => a.Contains(1, 1));
+        if (primary == default)
+            primary = areas[0];
+
+        var size = new PaddockModel();
+        var gap = Math.Max(12, _app.Settings.Settings.IntelligentSpacing);
+
+        using (manager.DeferSave())
+        {
+            for (var i = 0; i < orphans.Count; i++)
+            {
+                var spot = _app.LayoutEngine.FindFreeSpot(manager.GetPaddocks(), primary, size.Width, size.Height, gap)
+                           ?? (primary.Left + gap * (i + 1), primary.Top + gap * (i + 1));
+                var title = orphans.Count == 1 ? "Recovered" : $"Recovered {i + 1}";
+
+                manager.AdoptFolder(orphans[i], title, spot.X, spot.Y, size.Width, size.Height);
+            }
+
+            manager.ReconcilePaddocks();
+        }
+
+        var count = orphans.Sum(id => manager.GetPaddock(id)?.Icons.Count ?? 0);
+        Log.Warn($"Found {orphans.Count} paddock folder(s) no paddock owned any more, holding {count} item(s); " +
+                 "they are in \"Recovered\" paddocks now.");
+        return count;
     }
 
     /// <summary>
@@ -410,6 +482,7 @@ internal sealed class PaddockHost : IDisposable
         _disposed = true;
         _zOrderTimer.Stop();
         _settleTimer.Stop();
+        _resyncTimer.Stop();
 
         // Never leave the user's desktop empty behind us.
         _iconRetryTimer.Stop();

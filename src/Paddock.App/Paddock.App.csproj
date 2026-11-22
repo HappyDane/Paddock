@@ -5,6 +5,8 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>Paddock.App</RootNamespace>
     <AssemblyName>Paddock</AssemblyName>
+    <!-- Program.Main runs the crash watchdog and restore-all before WPF loads. -->
+    <StartupObject>Paddock.App.Program</StartupObject>
     <!-- Uncomment when assets/tray-icon.ico is added -->
     <!-- <ApplicationIcon>..\..\assets\tray-icon.ico</ApplicationIcon> -->
   </PropertyGroup>

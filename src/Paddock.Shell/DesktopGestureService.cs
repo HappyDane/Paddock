@@ -33,9 +33,16 @@ public sealed class DesktopGestureService : IDisposable
     private const uint ReplayMessage = NativeMethods.WM_APP + 1;
     private const uint DoubleClickMessage = NativeMethods.WM_APP + 2;
 
+    /// <summary>How often the hook is checked for having been dropped by Windows.</summary>
+    private const uint HealthCheckMs = 5000;
+
     private readonly DesktopDrawGesture _gesture;
     private readonly DesktopDoubleClick _doubleClick;
+    private readonly HookWatchdog _health = new();
     private readonly object _gate = new();
+
+    private IntPtr _hook;
+    private DateTime _lastReinstallLogged = DateTime.MinValue;
 
     private volatile bool _drawEnabled;
     private volatile bool _doubleClickEnabled;
@@ -160,10 +167,10 @@ public sealed class DesktopGestureService : IDisposable
         // Create this thread's message queue before anyone can post to it.
         NativeMethods.PeekMessageW(out _, IntPtr.Zero, 0, 0, NativeMethods.PM_NOREMOVE);
 
-        var hook = NativeMethods.SetWindowsHookExW(NativeMethods.WH_MOUSE_LL, _proc, NativeMethods.GetModuleHandleW(null), 0);
+        _hook = NativeMethods.SetWindowsHookExW(NativeMethods.WH_MOUSE_LL, _proc, NativeMethods.GetModuleHandleW(null), 0);
         started.Set();
 
-        if (hook == IntPtr.Zero)
+        if (_hook == IntPtr.Zero)
         {
             Log.Warn($"Could not watch the mouse for desktop gestures (error {Marshal.GetLastWin32Error()}). " +
                      "New paddocks can still be drawn, and paddocks hidden, from the tray menu.");
@@ -175,10 +182,18 @@ public sealed class DesktopGestureService : IDisposable
             return;
         }
 
+        var timer = NativeMethods.SetTimer(IntPtr.Zero, 0, HealthCheckMs, IntPtr.Zero);
+
         try
         {
             while (NativeMethods.GetMessageW(out var message, IntPtr.Zero, 0, 0) > 0)
             {
+                if (message.hwnd == IntPtr.Zero && message.message == NativeMethods.WM_TIMER)
+                {
+                    CheckHookHealth();
+                    continue;
+                }
+
                 if (message.hwnd == IntPtr.Zero && message.message == ReplayMessage)
                 {
                     ReplayRightClick();
@@ -197,12 +212,41 @@ public sealed class DesktopGestureService : IDisposable
         }
         finally
         {
-            NativeMethods.UnhookWindowsHookEx(hook);
+            if (timer != 0)
+                NativeMethods.KillTimer(IntPtr.Zero, timer);
+
+            NativeMethods.UnhookWindowsHookEx(_hook);
+            _hook = IntPtr.Zero;
+        }
+    }
+
+    /// <summary>
+    /// Windows silently removes a low-level hook that answers too slowly too
+    /// often, and right-drag and double-click would just stop. If the pointer
+    /// has moved but the hook heard nothing, install it again.
+    /// </summary>
+    private void CheckHookHealth()
+    {
+        if (!NativeMethods.GetCursorPos(out var cursor) || !_health.Check(cursor.X, cursor.Y))
+            return;
+
+        NativeMethods.UnhookWindowsHookEx(_hook);
+        _hook = NativeMethods.SetWindowsHookExW(NativeMethods.WH_MOUSE_LL, _proc!, NativeMethods.GetModuleHandleW(null), 0);
+
+        // A program moving the pointer itself looks the same; say so only now and then.
+        if (DateTime.UtcNow - _lastReinstallLogged > TimeSpan.FromMinutes(10))
+        {
+            _lastReinstallLogged = DateTime.UtcNow;
+            Log.Info(_hook == IntPtr.Zero
+                ? $"The desktop mouse hook went quiet and could not be installed again (error {Marshal.GetLastWin32Error()})."
+                : "The desktop mouse hook went quiet (Windows may have dropped it); installed it again.");
         }
     }
 
     private IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam)
     {
+        _health.OnHookEvent();
+
         if (code >= 0)
         {
             try

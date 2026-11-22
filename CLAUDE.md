@@ -90,6 +90,21 @@ tests/
   DELETE (not still downloading/copying), is not an empty placeholder, and
   nobody is renaming an item in a shell view. Rules only ever *move* items on
   the user's own desktop (`PaddockManager.MoveDesktopItemsIntoPaddock`).
+- **Icons must never end up out of sight.** While Paddock is not running, the
+  icons in paddocks are not on the desktop, so:
+  - `Program.Main` (the real entry point, before WPF loads) runs a small crash
+    watchdog per Paddock process (`Shell/CrashWatchdog`). It restarts Paddock
+    only after a *crash* exit code — never after Exit, a Task Manager / `Kill()`
+    end, while Windows signs out, or into a crash loop (`Core/RestartPolicy`).
+  - On startup, a store folder no paddock owns in *any* profile (unreadable
+    settings, a hand-edited file) becomes a "Recovered" paddock, and items loose
+    in the store root go back to the desktop (`PaddockHost.RecoverLostIcons`).
+  - `Paddock.exe --restore-all [--quiet]` empties the whole store onto the desktop
+    without settings or a running Paddock; `.Paddock\README.txt` says so.
+  - Self-healing: paddocks re-sync with their folders every minute and when the
+    store watcher overflows or stops; the mouse hook is reinstalled if the pointer
+    moves while it hears nothing (`Core/HookWatchdog` — Windows silently drops
+    slow low-level hooks).
 - **Drops are read in the OLE callback, applied after it.** And after dragging an
   icon *out*, Paddock never moves the file itself: the drop target (Explorer)
   does, and the store watcher notices. Moving it too races Explorer.
@@ -113,7 +128,9 @@ in and out, sort, click under an app window, press Win+D, double-click the
 desktop to hide and show, pick a wallpaper pixel with the eyedropper, turn on
 frosted glass and a tint, let an auto-organize rule route a new file (and not
 an Office-style save, nor an item dragged back out), restart and remove a
-paddock, checking files, `settings.json`, what is on screen, and `paddock.log`.
+paddock, recover a folder `settings.json` forgot, survive a crash (the
+watchdog restarts it), and `--restore-all` with Paddock closed — checking files,
+`settings.json`, what is on screen, and `paddock.log`.
 Screenshots of every step (and of every failure) are uploaded as artifacts.
 Run it locally only on a throwaway machine: it moves desktop files and wipes
 Paddock's settings, and refuses to start without `PADDOCK_SMOKE_TEST=1`.

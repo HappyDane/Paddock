@@ -71,6 +71,14 @@ that, and keeps it close to home:
   in `Desktop\.Paddock` and are back the moment Paddock starts (it starts with
   Windows by default). Tray → **Exit** says so and offers to put every icon back
   on the desktop first; tray → **Open Icons Folder** shows where they are.
+- **If Paddock crashes, it starts again by itself** (not after you exit it or end
+  it in Task Manager, and not over and over if it keeps crashing).
+- **Nothing is left out of sight.** If Paddock ever finds a zone folder it no
+  longer knows about (say `settings.json` was damaged), its icons come back in a
+  zone called **Recovered**.
+- **Getting everything back without Paddock**: run `Paddock.exe --restore-all`
+  and every icon in `Desktop\.Paddock` goes back on the desktop, whatever state
+  Paddock's settings are in. The `README.txt` in that folder says the same.
 
 Because the files really are on disk, zones survive restarts, and anything you
 drop into a zone's folder from Explorer shows up in the zone.

@@ -23,6 +23,24 @@ public class IconStore
 {
     private static readonly string[] IgnoredNames = ["desktop.ini", "thumbs.db"];
 
+    /// <summary>The note at the top of the store that says what it is and how to get everything back.</summary>
+    public const string ReadmeName = "README.txt";
+
+    private const string ReadmeText =
+        """
+        This folder belongs to Paddock, the desktop organizer.
+
+        The icons you put in a paddock are kept here, one folder per paddock -
+        that is what takes them off the desktop. Nothing in here is ever deleted.
+
+        To put every icon back on the desktop:
+          - with Paddock running: tray icon > Restore All Icons to Desktop
+          - without it:           run   Paddock.exe --restore-all
+          - or by hand:           move the files out of these folders onto your desktop
+
+        Whenever Paddock is running, it shows these icons in their paddocks.
+        """;
+
     public IconStore(string desktopRoot, string storeRoot, string? sharedDesktopRoot = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(desktopRoot);
@@ -211,6 +229,108 @@ public class IconStore
             Log.Error($"Could not move '{source}' back to the desktop.", ex);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Writes the store's README (what this folder is, how to get the icons
+    /// back without Paddock) unless it is already there.
+    /// </summary>
+    public void EnsureReadme()
+    {
+        try
+        {
+            Directory.CreateDirectory(StoreRoot);
+            var path = Path.Combine(StoreRoot, ReadmeName);
+            if (!File.Exists(path))
+                File.WriteAllText(path, ReadmeText.ReplaceLineEndings("\r\n"));
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not write the note in '{StoreRoot}': {ex.Message}");
+        }
+    }
+
+    /// <summary>The names (paddock ids) of the folders in the store.</summary>
+    public IReadOnlyList<string> ListPaddockFolders()
+    {
+        if (!Directory.Exists(StoreRoot))
+            return [];
+
+        try
+        {
+            return Directory.EnumerateDirectories(StoreRoot).Select(Path.GetFileName).OfType<string>().ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not list the paddock folders: {ex.Message}");
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Items sitting loose at the top of the store, in no paddock's folder
+    /// (dropped there by hand, say) — nothing would ever show them.
+    /// </summary>
+    public IReadOnlyList<string> ListStrayItems()
+    {
+        if (!Directory.Exists(StoreRoot))
+            return [];
+
+        try
+        {
+            return Directory.EnumerateFiles(StoreRoot)
+                .Where(p => !IsIgnored(p) && !string.Equals(Path.GetFileName(p), ReadmeName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not list the paddock store: {ex.Message}");
+            return [];
+        }
+    }
+
+    /// <summary>Removes a paddock folder that has nothing in it. Never removes one that does.</summary>
+    public void RemoveFolderIfEmpty(string paddockId)
+    {
+        var folder = GetPaddockFolder(paddockId);
+
+        try
+        {
+            if (Directory.Exists(folder) && !Directory.EnumerateFileSystemEntries(folder).Any())
+                Directory.Delete(folder);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Could not remove the empty folder '{folder}': {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Moves every item in the store — in any paddock's folder, or loose —
+    /// back onto the desktop, whether or not Paddock knows about it. The
+    /// folders stay. For <c>Paddock.exe --restore-all</c>: it needs neither
+    /// settings.json nor a running Paddock. Returns how many items moved.
+    /// </summary>
+    public int RestoreEverything()
+    {
+        var moved = 0;
+
+        foreach (var id in ListPaddockFolders())
+        {
+            foreach (var item in ListPaddockItems(id))
+            {
+                if (MoveToDesktop(item) is not null)
+                    moved++;
+            }
+        }
+
+        foreach (var stray in ListStrayItems())
+        {
+            if (MoveToDesktop(stray) is not null)
+                moved++;
+        }
+
+        return moved;
     }
 
     /// <summary>Lists the items physically present in a paddock's folder.</summary>
