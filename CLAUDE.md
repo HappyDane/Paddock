@@ -109,7 +109,10 @@ dotnet test                           # Run all tests
 single-file `Paddock.exe` (downloadable artifact `Paddock-win-x64`), then
 `tests/Paddock.DesktopSmoke` against that exe on Windows Server 2022 and 2025.
 The smoke test uses real mouse input and UI Automation to drag desktop icons
-in and out, sort, click under an app window, press Win+D, restart and remove a
+in and out, sort, click under an app window, press Win+D, double-click the
+desktop to hide and show, pick a wallpaper pixel with the eyedropper, turn on
+frosted glass and a tint, let an auto-organize rule route a new file (and not
+an Office-style save, nor an item dragged back out), restart and remove a
 paddock, checking files, `settings.json`, what is on screen, and `paddock.log`.
 Screenshots of every step (and of every failure) are uploaded as artifacts.
 Run it locally only on a throwaway machine: it moves desktop files and wipes
